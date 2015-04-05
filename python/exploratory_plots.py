@@ -16,7 +16,6 @@ def box_plot_counts(df):
     plt.show()
 
 
-
 if __name__ == "__main__":
 
     data_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto', 'data')
