@@ -6,13 +6,13 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
-def violin_plot_counts(df):
-    sns.violinplot(df.counts, groupby=df.target)
+def violin_plot_counts(df, column):
+    sns.violinplot(df['column'], groupby=df['target'])
     plt.show()
 
 
-def box_plot_counts(df):
-    sns.boxplot(df.counts, groupby=df.target)
+def box_plot_counts(df, column):
+    sns.boxplot(df[column], groupby=df['target'])
     plt.show()
 
 
