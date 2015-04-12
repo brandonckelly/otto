@@ -51,12 +51,13 @@ def get_initial_values(counts, nchains=4):
 
     iguesses = []
     for c in range(nchains):
-        if c == 0:
+        if c < 10:
             bin_prob_guess = fraction
         else:
             bin_prob_guess = np.random.dirichlet(counts.sum(axis=0) / 10.0)
-        concentration_guess = np.random.lognormal(np.log(np.median(concentration)), 0.1)
-        negbin_failures_guess = np.random.choice(rgrid, p=nf_marginal)
+        concentration_guess = np.random.lognormal(np.log(np.median(concentration)), 1e-6)
+        # negbin_failures_guess = np.random.choice(rgrid, p=nf_marginal)
+        negbin_failures_guess = rgrid[np.argmax(nf_marginal)]
         iguesses.append({'bin_probs': bin_prob_guess,
                          'concentration': concentration_guess,
                          'negbin_nfailures': negbin_failures_guess})
