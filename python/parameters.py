@@ -11,10 +11,10 @@ from bck_mcmc.parameter import Parameter
 from bck_mcmc.steps import RobustAdaptiveMetro
 
 
-class NegBinCounts(Parameter):
+class LogNegBinCounts(Parameter):
 
     def __init__(self, counts, label, track=True, prior_a=1.0, prior_b=1.0, prior_mu=4.6, prior_sigma=2.0):
-        super(NegBinCounts, self).__init__(label, track)
+        super(LogNegBinCounts, self).__init__(label, track)
         self.counts = counts  # data
         self.prior_a = prior_a
         self.prior_b = prior_b
@@ -32,10 +32,10 @@ class NegBinCounts(Parameter):
 
     def initialize(self):
         # compute marginal posterior on a grid an draw from the pdf
-        rgrid = np.linspace(0.0, 100.0, 10000)
+        rgrid = np.linspace(1.0, 100.0, 10000)
         logpost_grid = np.zeros(len(rgrid))
         for i in range(len(rgrid)):
-            logpost_grid[i] = self.logdensity(rgrid[i])
+            logpost_grid[i] = self.logdensity(np.log(rgrid[i]))
 
         # refine the grid to focus on regions with high probability
         max_idx = np.argmax(logpost_grid)
@@ -47,7 +47,7 @@ class NegBinCounts(Parameter):
         rgrid = np.linspace(new_low, new_high, 1000)
         logpost_grid = np.zeros(len(rgrid))
         for i in range(len(rgrid)):
-            logpost_grid[i] = self.logdensity(rgrid[i])
+            logpost_grid[i] = self.logdensity(np.log(rgrid[i]))
 
         # compute the pdf and draw from it
         r_marginal = np.exp(logpost_grid - logpost_grid.max())
@@ -55,17 +55,20 @@ class NegBinCounts(Parameter):
 
         ivalue = np.random.choice(rgrid, p=r_marginal)
 
-        return ivalue
+        self.value = np.log(ivalue)
 
     def logdensity(self, value):
 
-        logpost = self.gammaln_a_total_counts + \
-                  gammaln(self.prior_b + self.ndata * value) - \
-                  gammaln(self.prior_a + self.prior_b + self.total_counts + self.ndata * value)
+        nfailure = np.exp(value)
+
+        logpost = -0.5 * (value - self.prior_mu) ** 2 / self.prior_sigma ** 2  # the prior
+        logpost += self.gammaln_a_total_counts + \
+                  gammaln(self.prior_b + self.ndata * nfailure) - \
+                  gammaln(self.prior_a + self.prior_b + self.total_counts + self.ndata * nfailure)
         # only compute log gamma function for unique values of self.counts, since expensive
-        gammaln_counts_value_unique = gammaln(self.unique_counts + value)
+        gammaln_counts_value_unique = gammaln(self.unique_counts + nfailure)
         logpost += np.sum(gammaln_counts_value_unique[self.unique_idx] - self.gammaln_counts) - \
-                   self.ndata * gammaln(value)
+                   self.ndata * gammaln(nfailure)
 
         return logpost
 
@@ -75,7 +78,7 @@ class LogConcentration(Parameter):
     def __init__(self, counts_per_bin, label, track=True, prior_mean=0.0, prior_sigma=10.0):
         super(LogConcentration, self).__init__(label, track)
         self.counts_per_bin = counts_per_bin
-        self.bin_probs = None
+        self.log_gamma = None
         self.prior_mean = prior_mean
         self.prior_sigma = prior_sigma
 
@@ -87,12 +90,9 @@ class LogConcentration(Parameter):
         unique_counts, unique_idx = np.unique(self.counts, return_inverse=True)
         self.unique_counts = unique_counts
         self.unique_idx = unique_idx
-        unique_bin_counts, unique_bin_idx = np.unique(self.counts_per_bin, return_inverse=True)
-        self.unique_bin_idx = unique_bin_idx
-        self.unique_bin_counts = unique_bin_counts
 
     def initialize(self):
-        if self.bin_probs is None:
+        if self.log_gamma is None:
             raise ValueError("Associated LogBinProbsGamma instance is not initialized.")
 
         # estimate concentration by matching moments
@@ -106,31 +106,34 @@ class LogConcentration(Parameter):
         chat = np.median(concentration)
 
         cguess = np.random.lognormal(np.log(chat), 0.05)  # perturb the estimate by 5%
-        return cguess
+        self.value = cguess
 
-    def connect_bin_probs(self, bprobs):
-        self.bin_probs = bprobs
+    def connect_log_gamma(self, bprobs):
+        self.log_gamma = bprobs
         bprobs.concentration = self
 
     def logdensity(self, value):
 
         # transform values
         concentration = np.exp(value)
-        bin_probs_values = np.exp(self.bin_probs.value)
+        bin_probs_values = np.exp(self.log_gamma.value)
         bin_probs_values /= np.sum(bin_probs_values)
 
         logprior = -0.5 * (value - self.prior_mean) ** 2 / self.prior_sigma ** 2
 
         # compute log-gamma function only for unique values for efficiency
-        gammaln_bin_counts_conc = gammaln(self.unique_bin_counts + concentration * bin_probs_values)
+
+        bcounts_sum = self.counts_per_bin + concentration * bin_probs_values
+        uniq_bcsum, u_idx = np.unique(bcounts_sum, return_inverse=True)
+        gammaln_bin_counts_conc = gammaln(uniq_bcsum)[u_idx].reshape(bcounts_sum.shape)
         gammaln_counts_conc = gammaln(self.unique_counts + concentration)
 
         # sum loglik over bins for each data point
-        loglik = np.sum(self.gammaln_counts[self.unique_idx]) + \
+        loglik = np.sum(self.gammaln_counts) + \
                  self.ndata * gammaln(concentration) - \
                  np.sum(gammaln_counts_conc[self.unique_idx]) + \
-                 np.sum(gammaln_bin_counts_conc[self.unique_bin_idx]) - \
-                 np.sum(self.gammaln_counts_per_bin[self.unique_bin_idx]) - \
+                 np.sum(gammaln_bin_counts_conc) - \
+                 np.sum(self.gammaln_counts_per_bin) - \
                  self.ndata * np.sum(gammaln(concentration * bin_probs_values))
 
         logpost = loglik + logprior
@@ -154,20 +157,19 @@ class LogBinProbsGamma(Parameter):
         unique_counts, unique_idx = np.unique(self.counts, return_inverse=True)
         self.unique_counts = unique_counts
         self.unique_idx = unique_idx
-        unique_bin_counts, unique_bin_idx = np.unique(self.counts_per_bin, return_inverse=True)
-        self.unique_bin_idx = unique_bin_idx
-        self.unique_bin_counts = unique_bin_counts
 
-    def connect_bin_probs(self, conc):
+    def connect_concentration(self, conc):
         self.concentration = conc
-        conc.bin_probs = self
+        conc.log_gamma = self
 
     def initialize(self):
         if self.concentration is None:
             raise ValueError("Associated LogConcentration instance is not initialized.")
 
-        bin_prob_guess = np.random.dirichlet(self.counts_per_bin.sum(axis=0) / 10.0)
-        return bin_prob_guess
+        # bin_prob_guess = np.random.dirichlet(self.counts_per_bin.sum(axis=0) / 10.0)
+        shape_pars = self.counts_per_bin.sum(axis=0) / 10.0
+        gammas = np.random.gamma(shape_pars)
+        self.value = np.log(gammas)
 
     def logdensity(self, value):
 
@@ -180,15 +182,18 @@ class LogBinProbsGamma(Parameter):
         logprior = np.sum(logprior)
 
         # compute log-gamma function only for unique values for efficiency
-        gammaln_bin_counts_conc = gammaln(self.unique_bin_counts + concentration * bin_probs)
+        bcounts_sum = self.counts_per_bin + concentration * bin_probs
+        uniq_bcsum, u_idx = np.unique(bcounts_sum, return_inverse=True)
+        gammaln_bin_counts_conc = gammaln(uniq_bcsum)[u_idx].reshape(bcounts_sum.shape)
+
         gammaln_counts_conc = gammaln(self.unique_counts + concentration)
 
         # sum loglik over bins for each data point
-        loglik = np.sum(self.gammaln_counts[self.unique_idx]) + \
+        loglik = np.sum(self.gammaln_counts) + \
                  self.ndata * gammaln(concentration) - \
                  np.sum(gammaln_counts_conc[self.unique_idx]) + \
-                 np.sum(gammaln_bin_counts_conc[self.unique_bin_idx]) - \
-                 np.sum(self.gammaln_counts_per_bin[self.unique_bin_idx]) - \
+                 np.sum(gammaln_bin_counts_conc) - \
+                 np.sum(self.gammaln_counts_per_bin) - \
                  self.ndata * np.sum(gammaln(concentration * bin_probs))
 
         logpost = loglik + logprior
