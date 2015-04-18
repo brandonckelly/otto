@@ -45,6 +45,22 @@ def run_sampler(counts_per_bin, nsamples, burniter=None, nthin=1):
     return sampler
 
 
+def get_mcmc_samples(sampler):
+    samples = sampler.get_samples()
+
+    r_samples = np.exp(sampler.samples['log-nfailures'])
+    c_samples = np.exp(sampler.samples['log-conc'])
+    q_samples = np.array(sampler.samples['log-gamma'])
+    q_samples = np.exp(q_samples)  # convert from log(gamma) to bin_probs
+    q_samples /= q_samples.sum(axis=1)[:, np.newaxis]
+
+    bin_cols = ['bin_probs_' + str(i+1) for i in range(q_samples.shape[1])]
+    columns = ['nfailures', 'concentration'] + bin_cols
+    samples = pd.DataFrame(np.column_stack((r_samples, c_samples, q_samples)), columns=columns)
+
+    return samples
+
+
 if __name__ == "__main__":
 
     project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
