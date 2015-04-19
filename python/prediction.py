@@ -84,7 +84,7 @@ def posterior_predictive_total_counts(post_bin_counts, bin_counts):
 def posterior_predictive_bin_fracs(post_bin_counts, bin_counts):
     # compare with mean and variance in category fractions
     total_counts = bin_counts.sum(axis=1)
-    bin_fracs = bin_counts / total_counts[:, np.newaxis]
+    bin_fracs = bin_counts.apply(lambda x: x / total_counts, axis=0)
     mean_bin_frac = bin_fracs.mean(axis=0)
     std_bin_frac = bin_fracs.std(axis=0)
 
@@ -97,11 +97,11 @@ def posterior_predictive_bin_fracs(post_bin_counts, bin_counts):
     fig = plt.figure()
     ax1 = plt.subplot(211)
     sns.boxplot(post_bin_mean, ax=ax1)
-    plt.plot(1 + len(post_bin_counts), mean_bin_frac, 'ko')
+    plt.plot(1 + np.arange(len(mean_bin_frac)), mean_bin_frac, 'ko')
     ax1.set_ylabel('Mean over data')
     ax2 = plt.subplot(212)
     sns.boxplot(post_bin_std, ax=ax2)
-    ax2.plot(1 + len(post_bin_counts), std_bin_frac, 'ko')
+    ax2.plot(1 + np.arange(len(std_bin_frac)), std_bin_frac, 'ko')
     ax2.set_ylabel('Std over data')
     ax2.set_xlabel('Bin ID')
     plt.tight_layout()
@@ -111,7 +111,7 @@ def posterior_predictive_bin_fracs(post_bin_counts, bin_counts):
 
 def posterior_predictive_rcorrs(post_bin_counts, bin_counts):
     total_counts = bin_counts.sum(axis=1)
-    corr_df = bin_counts / total_counts[:, np.newaxis]  # fraction of data occupied in each bin
+    corr_df = bin_counts.apply(lambda x: x / total_counts, axis=0)  # fraction of data occupied in each bin
     corr_df['counts'] = total_counts
     corr_df = corr_df.corr(method='spearman')
 
@@ -148,7 +148,7 @@ def posterior_predictive_rcorrs(post_bin_counts, bin_counts):
 
 def posterior_predictive_bin_corrs(post_bin_counts, bin_counts):
     total_counts = bin_counts.sum(axis=1)
-    corr_df = bin_counts / total_counts[:, np.newaxis]  # fraction of data occupied in each bin
+    corr_df = bin_counts.apply(lambda x: x / total_counts, axis=0)  # fraction of data occupied in each bin
     corr_df = corr_df.corr(method='spearman')
 
     # histogram the correlations
@@ -206,19 +206,19 @@ def posterior_predictive_check(samples, bin_counts, class_label, nsamples=None):
     print 'Generating predictive samples...'
     data_samples = generate_predictive_samples(mcmc_samples, single_sampler=single_sampler)
 
-    print 'Comparing with histogram of total counts...'
-    ax = posterior_predictive_total_counts(data_samples, bin_counts)
-    ax.set_title(class_label)
-    plt.savefig(os.path.join(plot_dir, 'post_check_total_counts_' + class_label + '.png'))
-    plt.show()
-    plt.close()
+    # print 'Comparing with histogram of total counts...'
+    # ax = posterior_predictive_total_counts(data_samples, bin_counts)
+    # ax.set_title(class_label)
+    # plt.savefig(os.path.join(plot_dir, 'post_check_total_counts_' + class_label + '.png'))
+    # plt.show()
+    # plt.close()
 
-    print 'Comparing with first and second moments of bin fractions...'
-    ax1, ax2 = posterior_predictive_bin_fracs(data_samples, bin_counts)
-    ax1.set_title(class_label)
-    plt.savefig(os.path.join(plot_dir, 'post_check_bin_fracs_' + class_label + '.png'))
-    plt.show()
-    plt.close()
+    # print 'Comparing with first and second moments of bin fractions...'
+    # ax1, ax2 = posterior_predictive_bin_fracs(data_samples, bin_counts)
+    # ax1.set_title(class_label)
+    # plt.savefig(os.path.join(plot_dir, 'post_check_bin_fracs_' + class_label + '.png'))
+    # plt.show()
+    # plt.close()
 
     print 'Comparing with correlations between total counts and bin fractions...'
     ax = posterior_predictive_rcorrs(data_samples, bin_counts)

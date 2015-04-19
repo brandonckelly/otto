@@ -11,6 +11,7 @@ from bck_mcmc.parameter import Parameter
 from bck_mcmc.steps import RobustAdaptiveMetro
 
 
+# TODO: set lower bound = 1
 class LogNegBinCounts(Parameter):
 
     def __init__(self, counts, label, track=True, prior_a=1.0, prior_b=1.0, prior_mu=4.6, prior_sigma=2.0):
