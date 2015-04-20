@@ -130,16 +130,19 @@ def posterior_predictive_rcorrs(post_bin_counts, bin_counts):
     post_pdfs = np.empty((nsamples, nbins))
     sample_indices = post_bin_fracs.index.get_level_values(0).unique()
     for i, s_idx in enumerate(sample_indices):
+        print '   ', i
         corr_this_sample = post_bin_fracs.loc[s_idx].corr(method='spearman')
+        corr_cols = corr_this_sample.columns.difference(['counts'])  # don't correlate columns with themselves
         post_pdfs[i], _ = np.histogram(corr_this_sample.loc['counts', corr_cols], bins=bins)
 
-    post_pdf_low = np.percentile(post_pdfs, 5, axis=1)
-    post_pdf_hi = np.percentile(post_pdfs, 95, axis=1)
-    post_pdf_med = np.median(post_pdfs, axis=1)
+    post_pdf_low = np.percentile(post_pdfs, 5, axis=0)
+    post_pdf_hi = np.percentile(post_pdfs, 95, axis=0)
+    post_pdf_med = np.median(post_pdfs, axis=0)
 
-    plt.fill_between(bins, post_pdf_hi, post_pdf_low, alpha=0.5, color='DarkOrange')
-    plt.plot(bins, post_pdf_med, '-', lw=2, color='DarkOrange', label='Model')
-    plt.plot(bins, pdf, 'b-', lw=3, label='Data')
+    xbins = 0.5 * (bins[1:] + bins[:-1])
+    plt.fill_between(xbins, post_pdf_hi, post_pdf_low, alpha=0.5, color='DarkOrange')
+    plt.plot(xbins, post_pdf_med, '-', lw=2, color='DarkOrange', label='Model')
+    plt.plot(xbins, pdf, 'b-', lw=3, label='Data')
     plt.xlabel('Correlation between Total Counts and Bin Fractions')
 
     ax = plt.gca()
@@ -170,16 +173,18 @@ def posterior_predictive_bin_corrs(post_bin_counts, bin_counts):
     post_pdfs = np.empty((nsamples, nbins))
     sample_indices = post_bin_fracs.index.get_level_values(0).unique()
     for i, s_idx in enumerate(sample_indices):
+        print '      ', i
         corr_this_sample = post_bin_fracs.loc[s_idx].corr(method='spearman').values
         post_pdfs[i], _ = np.histogram(corr_this_sample[off_diag_idx], bins=bins)
 
-    post_pdf_low = np.percentile(post_pdfs, 5, axis=1)
-    post_pdf_hi = np.percentile(post_pdfs, 95, axis=1)
-    post_pdf_med = np.median(post_pdfs, axis=1)
+    post_pdf_low = np.percentile(post_pdfs, 5, axis=0)
+    post_pdf_hi = np.percentile(post_pdfs, 95, axis=0)
+    post_pdf_med = np.median(post_pdfs, axis=0)
 
-    plt.fill_between(bins, post_pdf_hi, post_pdf_low, alpha=0.5, color='DarkOrange')
-    plt.plot(bins, post_pdf_med, '-', lw=2, color='DarkOrange', label='Model')
-    plt.plot(bins, pdf, 'b-', lw=3, label='Data')
+    xbins = 0.5 * (bins[1:] + bins[:-1])
+    plt.fill_between(xbins, post_pdf_hi, post_pdf_low, alpha=0.5, color='DarkOrange')
+    plt.plot(xbins, post_pdf_med, '-', lw=2, color='DarkOrange', label='Model')
+    plt.plot(xbins, pdf, 'b-', lw=3, label='Data')
     plt.xlabel('Correlations Among Bin Fractions')
 
     ax = plt.gca()
@@ -206,19 +211,19 @@ def posterior_predictive_check(samples, bin_counts, class_label, nsamples=None):
     print 'Generating predictive samples...'
     data_samples = generate_predictive_samples(mcmc_samples, single_sampler=single_sampler)
 
-    # print 'Comparing with histogram of total counts...'
-    # ax = posterior_predictive_total_counts(data_samples, bin_counts)
-    # ax.set_title(class_label)
-    # plt.savefig(os.path.join(plot_dir, 'post_check_total_counts_' + class_label + '.png'))
-    # plt.show()
-    # plt.close()
+    print 'Comparing with histogram of total counts...'
+    ax = posterior_predictive_total_counts(data_samples, bin_counts)
+    ax.set_title(class_label)
+    plt.savefig(os.path.join(plot_dir, 'post_check_total_counts_' + class_label + '.png'))
+    plt.show()
+    plt.close()
 
-    # print 'Comparing with first and second moments of bin fractions...'
-    # ax1, ax2 = posterior_predictive_bin_fracs(data_samples, bin_counts)
-    # ax1.set_title(class_label)
-    # plt.savefig(os.path.join(plot_dir, 'post_check_bin_fracs_' + class_label + '.png'))
-    # plt.show()
-    # plt.close()
+    print 'Comparing with first and second moments of bin fractions...'
+    ax1, ax2 = posterior_predictive_bin_fracs(data_samples, bin_counts)
+    ax1.set_title(class_label)
+    plt.savefig(os.path.join(plot_dir, 'post_check_bin_fracs_' + class_label + '.png'))
+    plt.show()
+    plt.close()
 
     print 'Comparing with correlations between total counts and bin fractions...'
     ax = posterior_predictive_rcorrs(data_samples, bin_counts)

@@ -1,22 +1,15 @@
 __author__ = 'brandonkelly'
 
 import numpy as np
-import os
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
 from scipy.special import gammaln
-from bck_mcmc.sampler import Sampler
 from bck_mcmc.parameter import Parameter
-from bck_mcmc.steps import RobustAdaptiveMetro
 
 
-# TODO: set lower bound = 1
 class LogNegBinCounts(Parameter):
 
     def __init__(self, counts, label, track=True, prior_a=1.0, prior_b=1.0, prior_mu=4.6, prior_sigma=2.0):
         super(LogNegBinCounts, self).__init__(label, track)
-        self.counts = counts  # data
+        self.counts = counts - 1  # data
         self.prior_a = prior_a
         self.prior_b = prior_b
         self.prior_mu = prior_mu
@@ -141,6 +134,7 @@ class LogConcentration(Parameter):
         return logpost
 
 
+# TODO: Create Scalar Version
 class LogBinProbsGamma(Parameter):
 
     def __init__(self, counts_per_bin, label, track=True, prior_alphas=1.0):
