@@ -1,12 +1,10 @@
 __author__ = 'brandonkelly'
 
-from prediction import posterior_predictive_check
+from posterior_predictive import posterior_predictive_check
 import pandas as pd
 import matplotlib.pyplot as plt
 import sys
 import os
-
-
 
 
 if __name__ == "__main__":
