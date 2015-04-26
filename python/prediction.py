@@ -86,5 +86,24 @@ def training_loss(class_probs, training_data):
     return logloss
 
 
-def rhat_class_predictions(predictions):
-    pass
+def rhat_class_predictions(prob_samples):
+    # first split the chains in half
+    nsamples = np.max(prob_samples.index.get_level_values(1))
+    nchains = len(prob_samples.index.get_level_values(0).unique())
+    prob_samples = prob_samples.reset_index()
+    prob_samples['chain'] *= 2
+    prob_samples['chain'] -= (prob_samples['iter'] < nsamples / 2)
+    prob_samples = prob_samples.set_index(['chain', 'iter'])  # reset the index after splitting the chains in half
+    nchains *= 2
+
+    chain_average = prob_samples.mean(axis=0, level=0)
+    mcmc_average = chain_average.mean()
+
+    between_chain_var = nsamples / (nchains - 1) * ((chain_average - mcmc_average) ** 2).sum()
+    within_chain_var = 1.0 / (nsamples - 1.0) * ((prob_samples - chain_average) ** 2).sum(level=0).mean()
+
+    posterior_var = (nsamples - 1.0) / nsamples * within_chain_var + between_chain_var / nsamples
+
+    rhat = np.sqrt(posterior_var / within_chain_var)
+
+    return rhat
