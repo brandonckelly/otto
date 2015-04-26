@@ -90,7 +90,7 @@ class LogConcentration(Parameter):
             raise ValueError("Associated LogBinProbsGamma instance is not initialized.")
 
         # estimate concentration by matching moments
-        fractions = self.counts_per_bin / self.counts[:, np.newaxis].astype(float)
+        fractions = (1.0 + self.counts_per_bin) / (1.0 + self.counts[:, np.newaxis].astype(float))
 
         fraction = np.mean(fractions, axis=0)
         fraction /= fraction.sum()
@@ -98,7 +98,10 @@ class LogConcentration(Parameter):
         concentration = fraction * (1.0 - fraction) / fractions.var(axis=0) - 1.0
         concentration[concentration <= 0] = 1.0
         chat = np.median(concentration)
-
+        if chat > 1e3:
+            chat = 1e3
+        elif chat < 1.0:
+            chat = 1.0
         cguess = np.random.lognormal(np.log(chat), 0.05)  # perturb the estimate by 5%
         self.value = cguess
 
@@ -162,7 +165,7 @@ class LogBinProbsGamma(Parameter):
             raise ValueError("Associated LogConcentration instance is not initialized.")
 
         # bin_prob_guess = np.random.dirichlet(self.counts_per_bin.sum(axis=0) / 10.0)
-        shape_pars = self.counts_per_bin.sum(axis=0) / 10.0
+        shape_pars = (self.counts_per_bin.sum(axis=0) + 1.0) / 2.0
         gammas = np.random.gamma(shape_pars)
         self.value = np.log(gammas)
 
