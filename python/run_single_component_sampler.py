@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 from parameters import LogNegBinCounts, LogBinProbsGamma, LogConcentration
 from bck_mcmc.sampler import Sampler
 from bck_mcmc.steps import RobustAdaptiveMetro
-import cPickle
 import pickle
 import multiprocessing
 
@@ -33,22 +32,6 @@ def build_sampler(counts_per_bin, stop_adapting=sys.maxsize):
     return sampler
 
 
-def run_sampler(counts_per_bin, nsamples, burniter=None, nthin=1):
-
-    if burniter is None:
-        niter = nsamples * nthin
-        burniter = niter // 2
-
-    sampler = build_sampler(counts_per_bin, stop_adapting=burniter)
-
-    sampler.run(nsamples, nburn=burniter, nthin=nthin, verbose=True)
-
-    for step in sampler.steps:
-        step.report()
-
-    return sampler
-
-
 def get_mcmc_samples(sampler):
 
     r_samples = np.exp(sampler.samples['log-nfailures'])
@@ -60,6 +43,46 @@ def get_mcmc_samples(sampler):
     bin_cols = ['bin_probs_' + str(i+1) for i in range(q_samples.shape[1])]
     columns = ['nfailures', 'concentration'] + bin_cols
     samples = pd.DataFrame(np.column_stack((r_samples, c_samples, q_samples)), columns=columns)
+
+    return samples
+
+
+def run_parallel_chains_helper_(args):
+    counts_per_bin, nsamples, burniter, nthin, chain_id = args
+    sampler = build_sampler(counts_per_bin, stop_adapting=burniter)
+
+    sampler.run(nsamples, nburn=burniter, nthin=nthin, verbose=True)
+
+    for step in sampler.steps:
+        step.report()
+
+    # save the rng seed before pickling
+    sampler.rng_state = np.random.get_state()
+    with open(os.path.join(data_dir, 'single_component_sampler_' + target + '_chain_' +
+            str(chain_id) + '.pickle'), 'wb') as f:
+        pickle.dump(sampler, f)
+
+    samples = get_mcmc_samples(sampler)
+    return samples
+
+
+def run_sampler(counts_per_bin, nsamples, burniter=None, nthin=1, n_jobs=-1, nchains=-1):
+
+    if burniter is None:
+        niter = nsamples * nthin
+        burniter = niter // 2
+
+    if n_jobs < 0:
+        n_jobs = multiprocessing.cpu_count()
+    if nchains < 1:
+        nchains = n_jobs
+
+    pool = multiprocessing.Pool(n_jobs)
+
+    args_list = [(counts_per_bin, nsamples, burniter, nthin, chain_id) for chain_id in range(nchains)]
+    samples_list = pool.map(run_parallel_chains_helper_, args_list)
+
+    samples = pd.concat(samples_list, keys=range(1, nchains + 1), names=['chain', 'iter'])
 
     return samples
 
@@ -86,13 +109,6 @@ if __name__ == "__main__":
         this_df = train_df[train_df['target'] == target]
         stan_data = {'counts': this_df[columns].values, 'ntrain': len(this_df), 'nbins': len(columns)}
 
-        sampler = run_sampler(this_df[columns].values, nsamples, burniter=burniter, nthin=1)
+        samples = run_sampler(this_df[columns].values, nsamples, burniter=burniter, nthin=1)
 
-        samples = get_mcmc_samples(sampler)
         samples.to_hdf(os.path.join(data_dir, 'single_component_samples_' + target + '.h5'), 'df')
-
-        # save the rng seed before pickling
-        sampler.rng_state = np.random.get_state()
-        with open(os.path.join(data_dir, 'single_component_sampler_' + target + '.pickle'), 'wb') as f:
-            pickle.dump(sampler, f)
-        # TODO: add multiple chains

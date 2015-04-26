@@ -1,9 +1,7 @@
 __author__ = 'brandonkelly'
 
-from posterior_predictive import posterior_predictive_check
+from posterior_predictive_check import posterior_predictive_check
 import pandas as pd
-import matplotlib.pyplot as plt
-import sys
 import os
 
 
