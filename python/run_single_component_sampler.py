@@ -103,10 +103,10 @@ if __name__ == "__main__":
     data_dir = os.path.join(project_dir, 'data')
     plot_dir = os.path.join(project_dir, 'plots')
 
-    nsamples = 1000
-    burniter = 1000
+    nsamples = 5000
+    burniter = 5000
 
-    ds_factor = 10  # down-sampling factor
+    ds_factor = 1  # down-sampling factor
 
     nfeatures = 93
     columns = ['feat_' + str(i) for i in range(1, 94)]
@@ -115,7 +115,7 @@ if __name__ == "__main__":
 
     class_labels = train_df['target'].unique()
 
-    for target in class_labels:
+    for target in class_labels[-2:]:
         print ''
         print 'Doing class', target
         this_df = train_df.query('target == @target')

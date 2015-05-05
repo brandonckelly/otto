@@ -12,44 +12,53 @@ def log_sum_of_logs(logx):
 
 
 def get_loglik_samples_one_class(class_samples, counts, prior_a=1.0, prior_b=1.0):
-    total_counts = counts.sum(axis=1)
-    ndata = len(total_counts)
-    unique_tcounts, unique_tcounts_idx = np.unique(total_counts, return_inverse=True)
+    """
+    Return logarithm of unnormalized class probability for one class for each MCMC sample.
+
+    :param class_samples: MCMC samples for distribution corresponding to this class.
+    :param counts: Feature vector for a single data point.
+    :param prior_a:
+    :param prior_b:
+    :return:
+    """
+    total_counts = counts.sum()
     bin_cols = ['bin_probs_' + str(i + 1) for i in range(93)]
 
-    loglik_samples = pd.DataFrame(index=class_samples.index, columns=['x_' + str(i+1) for i in range(ndata)],
-                                  dtype=float)
-
     # compute log-likelihood of each data point, one MCMC sample at a time
-    for idx, sample in class_samples.iterrows():
-        # first calculate component from negative-binomial model for total counts
-        loglik = gammaln(prior_b + ndata * sample['nfailures']) - \
-            gammaln(prior_a + prior_b + total_counts.sum() + ndata * sample['nfailures'])
-        loglik += gammaln(unique_tcounts + sample['nfailures'])[unique_tcounts_idx] - gammaln(sample['nfailures'])
 
-        # now add in contribution from dirichlet-multinomial component
-        loglik += gammaln(sample['concentration']) - \
-                  gammaln(unique_tcounts + sample['concentration'])[unique_tcounts_idx]
+    # first calculate component from negative-binomial model for total counts
+    loglik = gammaln(prior_b + class_samples['nfailures']) - \
+        gammaln(prior_a + prior_b + total_counts + class_samples['nfailures'])
+    loglik += gammaln(total_counts + class_samples['nfailures']) - gammaln(class_samples['nfailures'])
 
-        bcounts_sum = counts + sample['concentration'] * sample[bin_cols]
-        uniq_bcsum, u_idx = np.unique(bcounts_sum, return_inverse=True)
-        loglik += gammaln(uniq_bcsum)[u_idx].reshape(bcounts_sum.shape).sum(axis=1) - \
-                  gammaln(sample['concentration'] * sample[bin_cols]).sum()
+    # now add in contribution from dirichlet-multinomial component
+    loglik += gammaln(class_samples['concentration']) - \
+              gammaln(total_counts + class_samples['concentration'])
 
-        loglik_samples.loc[idx] = loglik
+    bcounts = class_samples[bin_cols].apply(lambda x: x * class_samples['concentration'])
+    bcounts_sum = counts.values + bcounts
+    loglik += gammaln(bcounts_sum).sum(axis=1) - gammaln(bcounts).sum(axis=1)
 
-    return loglik_samples
+    return loglik
 
 
-def get_prob_samples_all_classes(samples, counts, prior_counts):
+def get_prob_samples_all_classes(samples, counts, class_prior_prob):
+    """
+    Return class probability for each MCMC sample for a single data point.
+
+    :param samples: MCMC samples for distribution corresponding to each class.
+    :param counts: Feature vector for a single data point.
+    :param class_prior_prob: Samples for class prior probabilities.
+    :return:
+    """
     labels = samples.columns.get_level_values(0).unique()
-    column_levels = [labels, ['x_' + str(i+1) for i in range(counts.shape[0])]]
-    prob_samples = pd.DataFrame(index=samples.index, dtype=float,
-                                columns=pd.MultiIndex.from_product(column_levels, names=['Class Label', 'Data Index']))
-    nsamples = samples.shape[0]
+    if np.any(labels != class_prior_prob.columns):
+        raise ValueError("class prior probability index must be the same as the first level of the columns of samples")
+
+    prob_samples = pd.DataFrame(index=samples.index, dtype=float, columns=labels)
+    prob_samples.columns.name = 'Class Label'
+
     # draws from class priors, given the training data
-    class_prior_prob = pd.DataFrame(np.random.dirichlet(prior_counts + 1, size=nsamples), index=samples.index,
-                                    columns=labels)
     for label in labels:
         # get unnormalized log-probability of test data point being in each class
         loglik_samples_this_class = get_loglik_samples_one_class(samples[label], counts)
@@ -57,19 +66,41 @@ def get_prob_samples_all_classes(samples, counts, prior_counts):
         prob_samples[label] = loglik_samples_this_class + np.log(class_prior_prob[label])
 
     # renormalize so that max(unnormalized probability) = 1, improves numerical stability
-    prob_samples -= prob_samples.max(axis=1, level=1)
+    prob_samples = prob_samples.apply(lambda x: x - prob_samples.max(axis=1))
     prob_samples = np.exp(prob_samples)
-    prob_samples /= prob_samples.sum(axis=1, level=1)  # normalize so probabilities sum to one for each MCMC sample
+
+    # normalize so probabilities sum to one for each MCMC sample
+    prob_samples = prob_samples.apply(lambda x: x / prob_samples.sum(axis=1))
 
     return prob_samples
 
 
-def classify(prob_samples):
-    class_probs = prob_samples.mean(axis=0)
-    # reshape dataframe to have each class's probability be a separate column
-    class_probs = class_probs.reset_index().pivot(index='Data Index', columns='Class Label')
-    class_probs['target'] = class_probs
-    return class_probs
+def classify(samples, counts, compute_rhat=False):
+    class_counts = counts.groupby('target').count()[counts.columns[0]]
+    fcols = ['feat_' + str(k+1) for k in range(93)]
+    counts = counts[fcols]
+    class_prior_prob = pd.DataFrame(np.random.dirichlet(class_counts + 1, size=samples.shape[0]), index=samples.index,
+                                    columns=class_counts.index)
+
+    class_probs = pd.DataFrame(data=np.empty((len(counts), len(class_counts))), index=counts.index,
+                               columns=class_counts.index)
+
+    if compute_rhat:
+        rhat = pd.DataFrame(data=np.empty((len(counts), len(class_counts))), index=counts.index,
+                            columns=class_counts.index)
+
+    # TODO: compute in parallel
+    for idx, x in counts.iterrows():
+        print idx
+        prob_samples = get_prob_samples_all_classes(samples, x, class_prior_prob)
+        class_probs.loc[idx] = prob_samples.mean(axis=0)
+        if compute_rhat:
+            rhat.loc[idx] = rhat_class_predictions(prob_samples)
+
+    if compute_rhat:
+        return class_probs, rhat
+    else:
+        return class_probs
 
 
 def training_loss(class_probs, training_data):
@@ -86,9 +117,20 @@ def training_loss(class_probs, training_data):
     return logloss
 
 
+def training_misclassification_rate(class_probs, training_data):
+    predicted_class = class_probs.idxmax(axis=1)
+    correct = predicted_class == training_data['target']
+    return np.sum(correct) / float(len(training_data))
+
+
+def logit(x):
+    return np.log(x / (1.0 - x))
+
+
 def rhat_class_predictions(prob_samples):
+    prob_samples = logit(prob_samples)
     # first split the chains in half
-    nsamples = np.max(prob_samples.index.get_level_values(1))
+    nsamples = np.max(prob_samples.index.get_level_values(1)) + 1
     nchains = len(prob_samples.index.get_level_values(0).unique())
     prob_samples = prob_samples.reset_index()
     prob_samples['chain'] *= 2
