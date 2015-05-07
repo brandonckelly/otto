@@ -215,26 +215,26 @@ def posterior_predictive_check(samples, bin_counts, class_label, nsamples=None):
     ax = posterior_predictive_total_counts(data_samples, bin_counts)
     ax.set_title(class_label)
     plt.savefig(os.path.join(plot_dir, 'post_check_total_counts_' + class_label + '.png'))
-    plt.show()
+    # plt.show()
     plt.close()
 
     print 'Comparing with first and second moments of bin fractions...'
     ax1, ax2 = posterior_predictive_bin_fracs(data_samples, bin_counts)
     ax1.set_title(class_label)
     plt.savefig(os.path.join(plot_dir, 'post_check_bin_fracs_' + class_label + '.png'))
-    plt.show()
+    # plt.show()
     plt.close()
 
     print 'Comparing with correlations between total counts and bin fractions...'
     ax = posterior_predictive_rcorrs(data_samples, bin_counts)
     ax.set_title(class_label)
     plt.savefig(os.path.join(plot_dir, 'post_check_counts_corrs_' + class_label + '.png'))
-    plt.show()
+    # plt.show()
     plt.close()
 
     print 'Comparing with correlations among bin fractions...'
     ax = posterior_predictive_bin_corrs(data_samples, bin_counts)
     ax.set_title(class_label)
     plt.savefig(os.path.join(plot_dir, 'post_check_bin_corrs_' + class_label + '.png'))
-    plt.show()
+    # plt.show()
     plt.close()

@@ -3,6 +3,14 @@ __author__ = 'brandonkelly'
 from posterior_predictive_check import posterior_predictive_check
 import pandas as pd
 import os
+import multiprocessing
+
+
+def ppc_helper(target):
+    print target
+    samples = pd.read_hdf(os.path.join(data_dir, 'single_component_samples_' + target + '.h5'), 'df')
+    bin_counts = train_df.query("target == @target")[feature_columns]
+    posterior_predictive_check(samples, bin_counts, target, nsamples=100)
 
 
 if __name__ == "__main__":
@@ -16,7 +24,12 @@ if __name__ == "__main__":
 
     class_labels = train_df['target'].unique()
 
-    for target in class_labels:
-        samples = pd.read_hdf(os.path.join(data_dir, 'single_component_samples_' + target + '.h5'), 'df')
-        bin_counts = train_df.query("target == @target")[feature_columns]
-        posterior_predictive_check(samples, bin_counts, target, nsamples=100)
+    n_jobs = 1
+    if n_jobs < 0:
+        n_jobs = multiprocessing.cpu_count()
+
+    if n_jobs == 1:
+        map(ppc_helper, class_labels)
+    else:
+        pool = multiprocessing.Pool(n_jobs)
+        pool.map(ppc_helper, class_labels)
