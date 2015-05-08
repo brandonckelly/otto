@@ -40,6 +40,12 @@ if __name__ == "__main__":
     class_probs.to_hdf(os.path.join(data_dir, 'training_class_probs_single_component.h5'), 'df')
     rhat.to_hdf(os.path.join(data_dir, 'training_rhat_single_component.h5'), 'df')
 
+    print 'Computing test set predictions...'
+    test_counts = pd.read_csv(os.path.join(data_dir, 'test.csv'))
+    test_class_probs, test_rhat = classify(samples, test_counts, compute_rhat=True, n_jobs=-1)
+    test_class_probs.to_hdf(os.path.join(data_dir, 'test_class_probs_single_component.h5'), 'df')
+    test_rhat.to_hdf(os.path.join(data_dir, 'test_rhat_single_component.h5'), 'df')
+
     print 'Computing the training loss...'
     loss = training_loss(class_probs, train_counts)
     print 'Training loss is', loss
