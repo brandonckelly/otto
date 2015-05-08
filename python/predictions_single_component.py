@@ -31,9 +31,14 @@ if __name__ == "__main__":
     # first get training error
     train_counts = pd.read_hdf(os.path.join(data_dir, 'train_processed.h5'), 'df')
 
+    nsamples = 500
+    nthin = len(samples) // nsamples
+    samples = samples.iloc[::nthin]
+
     print 'Getting target posterior probabilities...'
-    class_probs = classify(samples, train_counts, compute_rhat=True, n_jobs=-1)
+    class_probs, rhat = classify(samples, train_counts, compute_rhat=True, n_jobs=-1)
     class_probs.to_hdf(os.path.join(data_dir, 'training_class_probs_single_component.h5'), 'df')
+    rhat.to_hdf(os.path.join(data_dir, 'training_rhat_single_component.h5'), 'df')
 
     print 'Computing the training loss...'
     loss = training_loss(class_probs, train_counts)

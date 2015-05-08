@@ -122,7 +122,6 @@ def classify(samples, counts, compute_rhat=False, n_jobs=1):
     class_prior_prob = pd.DataFrame(np.random.dirichlet(class_counts + 1, size=samples.shape[0]), index=samples.index,
                                     columns=class_counts.index)
 
-
     args_list = [(samples, counts.loc[idx], class_prior_prob, compute_rhat) for idx in counts.index]
 
     if n_jobs < 0:
