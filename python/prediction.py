@@ -29,8 +29,8 @@ def get_loglik_samples_one_class(class_samples, counts, prior_a=1.0, prior_b=1.0
 
     # first calculate component from negative-binomial model for total counts
     loglik = gammaln(prior_b + class_samples['nfailures']) - \
-        gammaln(prior_a + prior_b + total_counts + class_samples['nfailures'])
-    loglik += gammaln(total_counts + class_samples['nfailures']) - gammaln(class_samples['nfailures'])
+        gammaln(prior_a + prior_b + total_counts - 1 + class_samples['nfailures'])
+    loglik += gammaln(total_counts - 1 + class_samples['nfailures']) - gammaln(class_samples['nfailures'])
 
     # now add in contribution from dirichlet-multinomial component
     loglik += gammaln(class_samples['concentration']) - \
@@ -115,12 +115,11 @@ def get_prob_samples_helper_(args):
     return prob_samples, this_rhat
 
 
-def classify(samples, counts, compute_rhat=False, n_jobs=1):
-    class_counts = counts.groupby('target').count()[counts.columns[0]]
+def classify(samples, counts, prior_counts, compute_rhat=False, n_jobs=1):
     fcols = ['feat_' + str(k+1) for k in range(93)]
     counts = counts[fcols]
-    class_prior_prob = pd.DataFrame(np.random.dirichlet(class_counts + 1, size=samples.shape[0]), index=samples.index,
-                                    columns=class_counts.index)
+    class_prior_prob = pd.DataFrame(np.random.dirichlet(prior_counts + 1, size=samples.shape[0]), index=samples.index,
+                                    columns=prior_counts.index)
 
     args_list = [(samples, counts.loc[idx], class_prior_prob, compute_rhat) for idx in counts.index]
 
