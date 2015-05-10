@@ -351,11 +351,81 @@ class LogBinProbsAlpha(Parameter):
 
 
 class MixtureComponents(Parameter):
-    pass
+    def __init__(self, label, counts_per_bin, track=True):
+        super(MixtureComponents, self).__init__(label, track)
+        self.stick_weights = None
+        self.negbin_pars = dict()
+        self.alphas = dict()
+        self.ncomponents = 0
+        self.counts_per_bin = counts_per_bin
+        self.ndata = counts_per_bin.shape[0]
+
+    def initialize(self):
+        if self.ncomponents == 0:
+            raise ValueError("Component parameter dictionary is empty.")
+        if self.stick_weights is None:
+            raise ValueError(self.label + " does not know about a stick weight parameter.")
+
+        # initialize size of clusters by drawing the stick breaking parameter from its prior, and then performing a
+        # multinomial draw
+
+        cluster_weights = np.zeros(self.ncomponents)
+        stick_weights = np.random.beta(1.0, 1.0, self.ncomponents - 1)
+        cluster_weights[0] = stick_weights[0]
+        for k in range(1, self.ncomponents - 1):
+            cluster_weights[k] = stick_weights[k] * np.prod(1.0 - stick_weights[:k])
+        cluster_weights[-1] = 1.0 - np.sum(cluster_weights[:-1])
+
+        assert cluster_weights.sum() == 1
+
+        # randomly assign data to clusters
+        self.value = np.random.choice(self.ncomponents, size=self.ndata, p=cluster_weights)
+
+    def random_draw(self):
+        pass
 
 
-class MixtureWeight(Parameter):
-    pass
+class StickWeight(Parameter):
+    def __init__(self, label, track=True):
+        super(StickWeight, self).__init__(label, track)
+        self.components = None
+        self.concentration = None
+
+    def initialize(self):
+        if self.components is None or self.concentration is None:
+            raise ValueError(self.label + " does not know about the component labels or the DP concentration.")
+        self.value = self.random_draw()
+
+    def random_draw(self):
+        new_weight = np.empty(self.components.ncomponents - 1)
+        n_k = np.empty_like(new_weight)
+        for k in range(self.components.ncomponents):
+            n_k[k] = np.sum(self.components == k)
+        for k in range(self.components.ncomponents - 1):
+            new_weight[k] = np.random.beta(1 + n_k[k], self.concentration.value + np.sum(n_k[k+1:]))
+
+        return new_weight
+
+
+class DPconcentration(Parameter):
+    def __init__(self, label, prior_shape, prior_scale, track=True):
+        super(DPconcentration, self).__init__(label, track)
+        self.prior_shape = prior_shape
+        self.prior_scale = prior_scale
+        self.stick_weights = None
+
+    def initialize(self):
+        if self.stick_weights is None:
+            raise ValueError(self.label + ' does not know about a stick weight parameter.')
+        # just draw from prior
+        self.value = np.random.gamma(self.prior_shape, 1.0 / self.prior_scale)
+
+    def random_draw(self):
+        ncomponents = len(self.stick_weights.value) + 1.0
+        shape = ncomponents - 1 + self.prior_shape
+        scale = self.prior_scale - np.sum(np.log(1.0 - self.stick_weights))
+
+        return np.random.gamma(shape, 1.0 / scale)
 
 
 class PriorMu(Parameter):
