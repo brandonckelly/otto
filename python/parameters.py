@@ -416,9 +416,9 @@ class MixtureComponents(Parameter):
             cluster_weights[k] = self.stick_weights.value[k] * np.prod(1.0 - self.stick_weights.value[:k])
         cluster_weights[-1] = 1.0 - np.sum(cluster_weights[:-1])
 
-        gammaln_values_a = dict()  # save computations so we don't have to redo them
-        gammaln_values_b = dict()
-        gammaln_values_ab = dict()
+        # gammaln_values_a = dict()  # save computations so we don't have to redo them
+        # gammaln_values_b = dict()
+        # gammaln_values_ab = dict()
         new_component_labels = np.zeros_like(self.value)
         for i in range(self.ndata):
             ndata_component[self.value[i]] -= 1  # remove this data point from the counts tally
@@ -426,17 +426,24 @@ class MixtureComponents(Parameter):
             for k in range(self.ncomponents):
                 total_counts_k = total_counts[k] + counts[i]
                 ndata_component_k = ndata_component[k] + 1
-                a_key = (k, total_counts_k)
-                b_key = (k, ndata_component_k)
-                ab_key = (k, ndata_component_k, total_counts_k)
-                if a_key not in gammaln_values_a:
-                    gammaln_values_a[a_key] = gammaln(beta_a[k] + total_counts_k)
-                if b_key not in gammaln_values_b:
-                    gammaln_values_b[b_key] = gammaln(beta_b[k] + ndata_component_k * nfailure[k])
-                if ab_key not in gammaln_values_ab:
-                    gammaln_values_ab[ab_key] = gammaln(beta_a[k] + beta_b[k] +
-                                                        ndata_component_k * nfailure[k] + total_counts_k)
-                logpost[i, k] += gammaln_values_a[a_key] + gammaln_values_b[b_key] + gammaln_values_ab[ab_key]
+
+                # seems to be faster than dynamic programming
+                logpost[i, k] += gammaln(beta_a[k] + total_counts_k) + \
+                                 gammaln(beta_b[k] + ndata_component_k * nfailure[k]) - \
+                                 gammaln(beta_a[k] + beta_b[k] + ndata_component_k * nfailure[k] + total_counts_k)
+
+                # a_key = (k, total_counts_k)
+                # b_key = (k, ndata_component_k)
+                # ab_key = (k, ndata_component_k, total_counts_k)
+                # if a_key not in gammaln_values_a:
+                #     gammaln_values_a[a_key] = gammaln(beta_a[k] + total_counts_k)
+                # if b_key not in gammaln_values_b:
+                #     gammaln_values_b[b_key] = gammaln(beta_b[k] + ndata_component_k * nfailure[k])
+                # if ab_key not in gammaln_values_ab:
+                #     gammaln_values_ab[ab_key] = gammaln(beta_a[k] + beta_b[k] +
+                #                                         ndata_component_k * nfailure[k] + total_counts_k)
+                # logpost[i, k] += gammaln_values_a[a_key] + gammaln_values_b[b_key] + gammaln_values_ab[ab_key]
+
                 logpost[i, k] += np.log(cluster_weights[k])
 
             component_prob_i = np.exp(logpost[i] - logpost[i].max())
