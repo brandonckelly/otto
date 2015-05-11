@@ -360,6 +360,9 @@ class MixtureComponents(Parameter):
         self.counts_per_bin = counts_per_bin
         self.ndata = counts_per_bin.shape[0]
 
+        # precompute quantities
+        self.gammaln_counts_per_bin = gammaln(counts_per_bin + 1)
+
     def initialize(self):
         if self.ncomponents == 0:
             raise ValueError("Component parameter dictionary is empty.")
@@ -382,7 +385,69 @@ class MixtureComponents(Parameter):
         self.value = np.random.choice(self.ncomponents, size=self.ndata, p=cluster_weights)
 
     def random_draw(self):
-        pass
+
+        counts = self.counts_per_bin.sum(axis=1)
+
+        # first compute part of posterior that can be vectorized
+        logpost = np.empty((self.ndata, self.ncomponents))
+        total_counts = np.zeros(self.ncomponents)
+        ndata_component = np.zeros(self.ncomponents)
+        beta_a = np.zeros(self.ncomponents)
+        beta_b = np.zeros(self.ncomponents)
+        nfailure = np.zeros(self.ncomponents)
+        for k in range(self.ncomponents):
+            beta_a[k] = np.exp(self.negbin_pars[k].value[1])
+            beta_b[k] = np.exp(self.negbin_pars[k].value[2])
+            nfailure[k] = np.exp(self.negbin_pars[k].value[0])
+            alpha = np.exp(self.alphas[k].value)
+            alpha_sum = np.sum(alpha)
+            logpost[:, k] = gammaln(counts + nfailure[k]) + gammaln(alpha_sum) - \
+                                 gammaln(counts + alpha_sum) - gammaln(nfailure[k]) + \
+                                 np.sum(gammaln(self.counts_per_bin + alpha) -
+                                        self.gammaln_counts_per_bin - gammaln(alpha), axis=1)
+            this_component = self.value == k
+            total_counts[k] = np.sum(counts[this_component])
+            ndata_component[k] = np.sum(self.value == k)
+
+        # now update the components, one data-point at a time. first get the cluster weights
+        cluster_weights = np.zeros(self.ncomponents)
+        cluster_weights[0] = self.stick_weights.value[0]
+        for k in range(1, self.ncomponents - 1):
+            cluster_weights[k] = self.stick_weights.value[k] * np.prod(1.0 - self.stick_weights.value[:k])
+        cluster_weights[-1] = 1.0 - np.sum(cluster_weights[:-1])
+
+        gammaln_values_a = dict()  # save computations so we don't have to redo them
+        gammaln_values_b = dict()
+        gammaln_values_ab = dict()
+        new_component_labels = np.zeros_like(self.value)
+        for i in range(self.ndata):
+            ndata_component[self.value[i]] -= 1  # remove this data point from the counts tally
+            total_counts[self.value[i]] -= counts[i]
+            for k in range(self.ncomponents):
+                total_counts_k = total_counts[k] + counts[i]
+                ndata_component_k = ndata_component[k] + 1
+                a_key = (k, total_counts_k)
+                b_key = (k, ndata_component_k)
+                ab_key = (k, ndata_component_k, total_counts_k)
+                if a_key not in gammaln_values_a:
+                    gammaln_values_a[a_key] = gammaln(beta_a[k] + total_counts_k)
+                if b_key not in gammaln_values_b:
+                    gammaln_values_b[b_key] = gammaln(beta_b[k] + ndata_component_k * nfailure[k])
+                if ab_key not in gammaln_values_ab:
+                    gammaln_values_ab[ab_key] = gammaln(beta_a[k] + beta_b[k] +
+                                                        ndata_component_k * nfailure[k] + total_counts_k)
+                logpost[i, k] += gammaln_values_a[a_key] + gammaln_values_b[b_key] + gammaln_values_ab[ab_key]
+                logpost[i, k] += np.log(cluster_weights[k])
+
+            component_prob_i = np.exp(logpost[i] - logpost[i].max())
+            component_prob_i /= np.sum(component_prob_i)
+
+            # update the component label
+            new_component_labels[i] = np.random.choice(self.ncomponents, p=component_prob_i)
+            ndata_component[self.value[i]] += 1  # add back to counts tally
+            total_counts[self.value[i]] += counts[i]
+
+        return new_component_labels
 
 
 class StickWeight(Parameter):
