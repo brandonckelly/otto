@@ -363,6 +363,11 @@ class MixtureComponents(Parameter):
         # precompute quantities
         self.gammaln_counts_per_bin = gammaln(counts_per_bin + 1)
 
+    def add_component(self, negbin, alpha, component_label):
+        self.negbin_pars[component_label] = negbin
+        self.alphas[component_label] = alpha
+        self.ncomponents = len(self.negbin_pars)
+
     def initialize(self):
         if self.ncomponents == 0:
             raise ValueError("Component parameter dictionary is empty.")
@@ -423,28 +428,27 @@ class MixtureComponents(Parameter):
         for i in range(self.ndata):
             ndata_component[self.value[i]] -= 1  # remove this data point from the counts tally
             total_counts[self.value[i]] -= counts[i]
-            for k in range(self.ncomponents):
-                total_counts_k = total_counts[k] + counts[i]
-                ndata_component_k = ndata_component[k] + 1
+            total_counts_k = total_counts + counts[i]
+            ndata_component_k = ndata_component + 1
 
-                # seems to be faster than dynamic programming
-                logpost[i, k] += gammaln(beta_a[k] + total_counts_k) + \
-                                 gammaln(beta_b[k] + ndata_component_k * nfailure[k]) - \
-                                 gammaln(beta_a[k] + beta_b[k] + ndata_component_k * nfailure[k] + total_counts_k)
+            # seems to be faster than dynamic programming
+            logpost[i] += gammaln(beta_a + total_counts_k) + \
+                          gammaln(beta_b + ndata_component_k * nfailure) - \
+                          gammaln(beta_a + beta_b + ndata_component_k * nfailure + total_counts_k)
 
-                # a_key = (k, total_counts_k)
-                # b_key = (k, ndata_component_k)
-                # ab_key = (k, ndata_component_k, total_counts_k)
-                # if a_key not in gammaln_values_a:
-                #     gammaln_values_a[a_key] = gammaln(beta_a[k] + total_counts_k)
-                # if b_key not in gammaln_values_b:
-                #     gammaln_values_b[b_key] = gammaln(beta_b[k] + ndata_component_k * nfailure[k])
-                # if ab_key not in gammaln_values_ab:
-                #     gammaln_values_ab[ab_key] = gammaln(beta_a[k] + beta_b[k] +
-                #                                         ndata_component_k * nfailure[k] + total_counts_k)
-                # logpost[i, k] += gammaln_values_a[a_key] + gammaln_values_b[b_key] + gammaln_values_ab[ab_key]
+            # a_key = (k, total_counts_k)
+            # b_key = (k, ndata_component_k)
+            # ab_key = (k, ndata_component_k, total_counts_k)
+            # if a_key not in gammaln_values_a:
+            #     gammaln_values_a[a_key] = gammaln(beta_a[k] + total_counts_k)
+            # if b_key not in gammaln_values_b:
+            #     gammaln_values_b[b_key] = gammaln(beta_b[k] + ndata_component_k * nfailure[k])
+            # if ab_key not in gammaln_values_ab:
+            #     gammaln_values_ab[ab_key] = gammaln(beta_a[k] + beta_b[k] +
+            #                                         ndata_component_k * nfailure[k] + total_counts_k)
+            # logpost[i, k] += gammaln_values_a[a_key] + gammaln_values_b[b_key] + gammaln_values_ab[ab_key]
 
-                logpost[i, k] += np.log(cluster_weights[k])
+            logpost[i] += np.log(cluster_weights)
 
             component_prob_i = np.exp(logpost[i] - logpost[i].max())
             component_prob_i /= np.sum(component_prob_i)
@@ -501,12 +505,13 @@ class DPconcentration(Parameter):
 
 
 class PriorMu(Parameter):
-    def __init__(self, label, prior_mean, prior_var, track=True):
+    def __init__(self, label, prior_mean, prior_var, track=True, transform=None):
         super(PriorVar, self).__init__(label, track)
         self.children = []
         self.prior_mean = prior_mean
         self.prior_var = prior_var
         self.child_var = None
+        self.transform = transform
 
     def initialize(self):
         if not self.children:
@@ -514,7 +519,14 @@ class PriorMu(Parameter):
         if self.child_var is None:
             raise ValueError("Unknown child variance parameter.")
 
-        self.value = self.random_draw()
+        data_sum = 0.0
+        for child in self.children:
+            if self.transform is None:
+                data_sum += child.value
+            else:
+                data_sum += self.transform(child.value)
+
+        self.value = data_sum / len(self.children)
 
     def random_draw(self):
         if self.prior_var.ndim == 2:
@@ -528,7 +540,10 @@ class PriorMu(Parameter):
 
         data_sum = 0.0
         for child in self.children:
-            data_sum += child.value
+            if self.transform is None:
+                data_sum += child.value
+            else:
+                data_sum += self.transform(child.value)
 
         if self.child_var.value.ndim == 2:
             # covariance matrix
@@ -552,12 +567,13 @@ class PriorMu(Parameter):
 
 
 class PriorVar(Parameter):
-    def __init__(self, label, prior_dof, prior_ssqr, track=True):
+    def __init__(self, label, prior_dof, prior_ssqr, track=True, transform=None):
         super(PriorVar, self).__init__(label, track)
         self.children = []
         self.prior_dof = prior_dof
         self.prior_ssqr = prior_ssqr
         self.child_mean = None
+        self.transform = transform
 
     def initialize(self):
         if not self.children:
@@ -572,7 +588,11 @@ class PriorVar(Parameter):
         nchildren = len(self.children)
         data_ssqr = 0.0
         for child in self.children:
-            data_ssqr += (child.value - self.child_mean.value) ** 2
+            if self.transform is None:
+                child_value = child.value
+            else:
+                child_value = self.transform(child.value)
+            data_ssqr += (child_value - self.child_mean.value) ** 2
 
         post_dof = self.prior_dof + nchildren
         post_ssqr = (self.prior_dof * self.prior_ssqr + data_ssqr) / post_dof
