@@ -15,18 +15,16 @@ def negbin_sample(nfailure, p, ndata):
     return counts
 
 
-def generate_single_component_sample(sample, ndata):
+def generate_single_component_sample(sample, total_counts_sum, ndata, a=1.0, b=1.0):
 
-    bin_cols = [c for c in sample.index if 'alpha' in c]
+    bin_cols = [c for c in sample.index if 'bin_prob' in c]
     nbins = len(bin_cols)
     nfailures = sample['nfailures']
-    a = sample['beta_a']
-    b = sample['beta_b']
 
-    p = np.random.beta(a, b)
+    p = np.random.beta(a + total_counts_sum, b + ndata * nfailures)
     total_counts_draw = negbin_sample(nfailures, p, ndata)
 
-    bin_probs = np.random.dirichlet(sample[bin_cols], ndata)
+    bin_probs = np.random.dirichlet(sample['concentration'] * sample[bin_cols], ndata)
     bin_counts = np.empty((ndata, nbins))
     for i in range(ndata):
         bin_counts[i] = np.random.multinomial(total_counts_draw[i], bin_probs[i])
@@ -34,35 +32,16 @@ def generate_single_component_sample(sample, ndata):
     return bin_counts
 
 
-def generate_predictive_samples(samples, ndata):
+def generate_predictive_samples(samples, single_sampler=generate_single_component_sample):
     bin_labels = ['bin_' + str(i) for i, c in enumerate(samples.columns) if 'bin_prob' in c]
-    component_labels = [c for c in samples.index.get_level_values(0).unique() if 'Component' in c]
-    ncomponents = len(component_labels)
 
     # generate posterior draws
     post_data = []
     df_labels = []
     scount = 0
     for idx, sample in samples.iterrows():
-        # first generate mixture weights
-        stick_weights = sample.loc['Stick Weights']
-        cluster_weights = np.zeros(ncomponents)
-        cluster_weights[0] = stick_weights[0]
-        for k in range(1, ncomponents - 1):
-            cluster_weights[k] = stick_weights[k] * np.prod(1.0 - stick_weights[:k])
-        cluster_weights[-1] = 1.0 - np.sum(cluster_weights[:-1])
-
-        ndata_cluster = np.random.multinomial(ndata, cluster_weights)
-
-        for k, c in enumerate(component_labels):
-            this_sample_k = sample.loc[c]
-            this_data_sample = generate_single_component_sample(this_sample_k, ndata_cluster[k])
-            if k == 0:
-                data_samples = this_data_sample
-            else:
-                np.append(data_samples, this_data_sample)
-
-        this_sample_df = pd.DataFrame(data_samples, columns=bin_labels)
+        this_sample = single_sampler(sample)
+        this_sample_df = pd.DataFrame(this_sample, columns=bin_labels)
         df_labels.append('MCMC ' + str(scount))
         post_data.append(this_sample_df)
         scount += 1
@@ -70,9 +49,6 @@ def generate_predictive_samples(samples, ndata):
     post_data = pd.concat(post_data, keys=df_labels)
 
     return post_data
-
-
-########## stopped here : May 12 ############
 
 
 def posterior_predictive_total_counts(post_bin_counts, bin_counts):
