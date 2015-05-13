@@ -7,10 +7,10 @@ import os
 import seaborn as sns
 
 
-def negbin_sample(nfailure, p, ndata):
+def negbin_sample(nfailure, p):
     shape = nfailure
     scale = p / (1.0 - p)
-    l = np.random.gamma(shape, scale, ndata)
+    l = np.random.gamma(shape, scale)
     counts = np.random.poisson(l) + 1
     return counts
 
