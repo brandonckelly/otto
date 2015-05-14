@@ -29,7 +29,7 @@ class TestParameters(unittest.TestCase):
 
         self.ndata = 1000
         self.nbins = 10
-        self.ncomponents = 4
+        self.ncomponents = 100
         self.bin_counts = np.zeros((self.ndata, self.nbins), dtype=np.int)
 
         self.dp_concentration = 1.0
@@ -56,23 +56,27 @@ class TestParameters(unittest.TestCase):
         self.alpha_inverse_var = np.ones_like(self.alpha_inverse_mu) * 0.1 ** 2
 
         self.alpha = np.zeros((self.nbins, self.ncomponents))
+        self.alpha_inverse = np.zeros_like(self.alpha)
         for k in range(self.ncomponents):
             # on the log scale
             alpha_inverse = self.alpha_inverse_mu + \
                             np.sqrt(self.alpha_inverse_var) * np.random.standard_normal(self.nbins)
             self.alpha[:, k] = alpha_inverse_transform(alpha_inverse)
-
+            self.alpha_inverse[:, k] = alpha_inverse
 
         for k in range(self.ncomponents):
             k_idx = np.where(self.component_labels == k)[0]
             nk = len(k_idx)
             if nk > 0:
                 total_counts = bnb_sample(self.nfailures[k], self.beta_a[k], self.beta_b[k], nk)
-                probs = np.random.dirichlet(self.alpha[:, k], nk)
                 for i in range(nk):
-                    self.bin_counts[k_idx[i]] = np.random.multinomial(total_counts[i], probs[i])
+                    probs = np.random.dirichlet(self.alpha[:, k])
+                    if nk == 1:
+                        self.bin_counts[k_idx[i]] = np.random.multinomial(total_counts, probs)
+                    else:
+                        self.bin_counts[k_idx[i]] = np.random.multinomial(total_counts[i], probs)
 
-        self.niter = 10000
+        self.niter = 20000
         self.nburn = 2500
 
     def test_dp_concentration(self):
@@ -146,12 +150,12 @@ class TestParameters(unittest.TestCase):
         mu_high = np.percentile(mu_draws, 99.0, axis=0)
 
         for j in range(3):
-            self.assertLess(mu_low[j], self.negbin_mu[j])
-            self.assertGreater(mu_high[j], self.negbin_mu[j])
-            # plt.hist(mu_draws[:, j], bins=100)
-            # plt.vlines(self.negbin_mu[j], plt.ylim()[0], plt.ylim()[1])
-            # plt.xlabel('Negbin Mu ' + str(j))
-            # plt.show()
+            # self.assertLess(mu_low[j], self.negbin_mu[j])
+            # self.assertGreater(mu_high[j], self.negbin_mu[j])
+            plt.hist(mu_draws[:, j], bins=100)
+            plt.vlines(self.negbin_mu[j], plt.ylim()[0], plt.ylim()[1])
+            plt.xlabel('Negbin Mu ' + str(j))
+            plt.show()
 
         # now test prior mean with a transform
         mu = PriorMu('prior-mu', np.zeros(self.nbins), 10.0 * np.ones(self.nbins), transform=alpha_transform)
@@ -173,15 +177,69 @@ class TestParameters(unittest.TestCase):
         mu_high = np.percentile(mu_draws, 99.0, axis=0)
 
         for j in range(self.nbins):
-            self.assertLess(mu_low[j], self.alpha_inverse_mu[j])
-            self.assertGreater(mu_high[j], self.alpha_inverse_mu[j])
+            # self.assertLess(mu_low[j], self.alpha_inverse_mu[j])
+            # self.assertGreater(mu_high[j], self.alpha_inverse_mu[j])
             plt.hist(mu_draws[:, j], bins=100)
             plt.vlines(self.alpha_inverse_mu[j], plt.ylim()[0], plt.ylim()[1])
             plt.xlabel('Alpha Inverse Mu ' + str(j))
             plt.show()
 
     def test_prior_var(self):
-        pass
+        mu = PriorMu('prior-mu', np.zeros(self.nbins), 10.0 * np.ones(self.nbins), transform=alpha_transform)
+        sigsqr = PriorVar('prior-var', np.ones(self.nbins), np.ones(self.nbins) / 10.0, transform=alpha_transform)
+        mu.value = self.alpha_inverse_mu
+        sigsqr.child_mean = mu
+
+        for k in range(self.ncomponents):
+            alpha_k = LogBinProbsAlpha(self.bin_counts, 'log-alpha-' + str(k), k)
+            alpha_k.value = np.log(self.alpha[:, k])
+            alpha_k.connect_prior(mu, sigsqr)
+
+        sigsqr.initialize()
+        var_draws = np.zeros((self.niter, self.nbins))
+        for i in range(self.niter):
+            var_draws[i] = sigsqr.random_draw()
+
+        var_low = np.percentile(var_draws, 1.0, axis=0)
+        var_high = np.percentile(var_draws, 99.0, axis=0)
+
+        for j in range(self.nbins):
+            self.assertLess(var_low[j], self.alpha_inverse_mu[j])
+            self.assertGreater(var_high[j], self.alpha_inverse_mu[j])
+            plt.hist(np.sqrt(var_draws[:, j]), bins=100)
+            plt.vlines(np.sqrt(self.alpha_inverse_var[j]), plt.ylim()[0], plt.ylim()[1])
+            plt.xlabel('Alpha Inverse Standard Deviation ' + str(j))
+            plt.show()
+
+    def test_prior_covar(self):
+
+        mu = PriorMu('prior-mu', np.zeros(3), 10.0 * np.identity(3))
+        sigsqr = PriorCovar('prior-covar', 1, np.identity(3) / 10.0)
+        mu.value = self.negbin_mu
+        sigsqr.child_mean = mu
+
+        for k in range(self.ncomponents):
+            negbin_k = MixLogNegBinPars(self.bin_counts.sum(axis=1), 'log-negbin-' + str(k), k)
+            negbin_k.value = np.log([self.nfailures[k], self.beta_a[k], self.beta_b[k]])
+            negbin_k.connect_prior(mu, sigsqr)
+
+        sigsqr.initialize()
+        covar_draws = np.zeros((self.niter, 3, 3))
+        for i in range(self.niter):
+            covar_draws[i] = sigsqr.random_draw()
+
+        cov_low = np.percentile(covar_draws, 0.5, axis=0)
+        cov_high = np.percentile(covar_draws, 99.5, axis=0)
+
+        for j in range(3):
+            for i in range(j, 3):
+                print (j, i)
+                self.assertLess(cov_low[j, i], self.negbin_covar[j, i])
+                self.assertGreater(cov_high[j, i], self.negbin_covar[j, i])
+                plt.hist(covar_draws[:, j, i], bins=100)
+                plt.vlines(self.negbin_covar[j, i], plt.ylim()[0], plt.ylim()[1])
+                plt.xlabel('Negbin Covar ' + str(j) + ', ' + str(i))
+                plt.show()
 
     def test_components(self):
         pass

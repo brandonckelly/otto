@@ -40,10 +40,10 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
     # prior parameters
     prior_negbin_mean = PriorMu('negbin-prior-mean', np.array([np.log(10), 0.0, 0.0]), np.diag([10.0, 2.0, 2.0]),
                                 track=False)
-    prior_negbin_covar = PriorCovar('negbin-prior-covar', 3, np.eye(3), track=False)
+    prior_negbin_covar = PriorCovar('negbin-prior-covar', 3, np.eye(3) / 10.0, track=False)
     prior_alpha_mean = PriorMu('alpha-prior-mean', np.array([2.0] + (nbins - 1) * [0]),
                                np.array([1.0] + (nbins - 1) * [3]), transform=alpha_transform, track=False)
-    prior_alpha_var = PriorVar('alpha-prior-var', np.ones(nbins), np.ones(nbins), transform=alpha_transform,
+    prior_alpha_var = PriorVar('alpha-prior-var', np.ones(nbins), np.ones(nbins) / 10.0, transform=alpha_transform,
                                track=False)
 
     stick = StickWeight('stick-weights')

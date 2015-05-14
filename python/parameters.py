@@ -580,7 +580,7 @@ class PriorVar(Parameter):
         if not self.children:
             raise ValueError("Must connect children.")
         if self.child_mean is None:
-            raise ValueError("Unknown child variance parameter.")
+            raise ValueError("Unknown child mean parameter.")
 
         self.value = self.random_draw()
 
@@ -623,7 +623,7 @@ class PriorCovar(Parameter):
 
         data_scale = 0.0
         for child in self.children:
-            data_scale += np.outer(child.value - self.child_mean, child.value - self.child_mean)
+            data_scale += np.outer(child.value - self.child_mean.value, child.value - self.child_mean.value)
 
         post_scale = data_scale + self.prior_scale
         post_precision = linalg.inv(post_scale)
