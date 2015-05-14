@@ -369,6 +369,8 @@ class MixtureComponents(Parameter):
 
         # precompute quantities
         self.gammaln_counts_per_bin = gammaln(counts_per_bin + 1)
+        self.gammaln_counts_minus_1 = gammaln(counts_per_bin.sum(axis=1))  # negative binomial parameter is wrt n - 1
+        self.gammaln_counts = gammaln(counts_per_bin.sum(axis=1))
 
     def add_component(self, negbin, alpha, component_label):
         self.negbin_pars[component_label] = negbin
@@ -398,72 +400,51 @@ class MixtureComponents(Parameter):
 
     def random_draw(self):
 
-        counts = self.counts_per_bin.sum(axis=1)
+        counts = self.counts_per_bin.sum(axis=1) - 1
 
         # first compute part of posterior that can be vectorized
         logpost = np.empty((self.ndata, self.ncomponents))
         total_counts = np.zeros(self.ncomponents)
         ndata_component = np.zeros(self.ncomponents)
-        beta_a = np.zeros(self.ncomponents)
-        beta_b = np.zeros(self.ncomponents)
-        nfailure = np.zeros(self.ncomponents)
-        for k in range(self.ncomponents):
-            beta_a[k] = np.exp(self.negbin_pars[k].value[1])
-            beta_b[k] = np.exp(self.negbin_pars[k].value[2])
-            nfailure[k] = np.exp(self.negbin_pars[k].value[0])
-            alpha = np.exp(self.alphas[k].value)
-            alpha_sum = np.sum(alpha)
-            logpost[:, k] = gammaln(counts + nfailure[k]) + gammaln(alpha_sum) - \
-                                 gammaln(counts + alpha_sum) - gammaln(nfailure[k]) + \
-                                 np.sum(gammaln(self.counts_per_bin + alpha) -
-                                        self.gammaln_counts_per_bin - gammaln(alpha), axis=1)
-            this_component = self.value == k
-            total_counts[k] = np.sum(counts[this_component])
-            ndata_component[k] = np.sum(self.value == k)
 
-        # now update the components, one data-point at a time. first get the cluster weights
+        # get the cluster weights
         cluster_weights = np.zeros(self.ncomponents)
         cluster_weights[0] = self.stick_weights.value[0]
         for k in range(1, self.ncomponents - 1):
             cluster_weights[k] = self.stick_weights.value[k] * np.prod(1.0 - self.stick_weights.value[:k])
         cluster_weights[-1] = 1.0 - np.sum(cluster_weights[:-1])
 
-        # gammaln_values_a = dict()  # save computations so we don't have to redo them
-        # gammaln_values_b = dict()
-        # gammaln_values_ab = dict()
-        new_component_labels = np.zeros_like(self.value)
+        for k in range(self.ncomponents):
+            beta_a = np.exp(self.negbin_pars[k].value[1])
+            beta_b = np.exp(self.negbin_pars[k].value[2])
+            nfailure = np.exp(self.negbin_pars[k].value[0])
+            alpha = np.exp(self.alphas[k].value)
+            alpha_sum = np.sum(alpha)
+
+            logpost[:, k] = gammaln(beta_a + beta_b) - \
+                            self.gammaln_counts_minus_1 - \
+                            gammaln(beta_a) - \
+                            gammaln(beta_b) - \
+                            gammaln(nfailure) + \
+                            gammaln(beta_a + nfailure) + \
+                            gammaln(counts + nfailure) + \
+                            gammaln(counts + beta_b) - \
+                            gammaln(counts + beta_a + beta_b + nfailure) + \
+                            self.gammaln_counts + \
+                            gammaln(alpha_sum) - \
+                            gammaln(counts + alpha_sum) - \
+                            np.sum(gammaln(self.counts_per_bin + alpha) -
+                                   self.gammaln_counts_per_bin -
+                                   gammaln(alpha), axis=1) + \
+                            np.log(cluster_weights[k])
+
+        cluster_prob = np.exp(logpost - logpost.max(axis=1)[:, np.newaxis])
+        cluster_prob /= cluster_prob.sum(axis=1)[:, np.newaxis]
+
+        # update the component labels
+        new_component_labels = np.empty_like(self.value)
         for i in range(self.ndata):
-            ndata_component[self.value[i]] -= 1  # remove this data point from the counts tally
-            total_counts[self.value[i]] -= counts[i]
-            total_counts_k = total_counts + counts[i]
-            ndata_component_k = ndata_component + 1
-
-            # seems to be faster than dynamic programming
-            logpost[i] += gammaln(beta_a + total_counts_k) + \
-                          gammaln(beta_b + ndata_component_k * nfailure) - \
-                          gammaln(beta_a + beta_b + ndata_component_k * nfailure + total_counts_k)
-
-            # a_key = (k, total_counts_k)
-            # b_key = (k, ndata_component_k)
-            # ab_key = (k, ndata_component_k, total_counts_k)
-            # if a_key not in gammaln_values_a:
-            #     gammaln_values_a[a_key] = gammaln(beta_a[k] + total_counts_k)
-            # if b_key not in gammaln_values_b:
-            #     gammaln_values_b[b_key] = gammaln(beta_b[k] + ndata_component_k * nfailure[k])
-            # if ab_key not in gammaln_values_ab:
-            #     gammaln_values_ab[ab_key] = gammaln(beta_a[k] + beta_b[k] +
-            #                                         ndata_component_k * nfailure[k] + total_counts_k)
-            # logpost[i, k] += gammaln_values_a[a_key] + gammaln_values_b[b_key] + gammaln_values_ab[ab_key]
-
-            logpost[i] += np.log(cluster_weights)
-
-            component_prob_i = np.exp(logpost[i] - logpost[i].max())
-            component_prob_i /= np.sum(component_prob_i)
-
-            # update the component label
-            new_component_labels[i] = np.random.choice(self.ncomponents, p=component_prob_i)
-            ndata_component[self.value[i]] += 1  # add back to counts tally
-            total_counts[self.value[i]] += counts[i]
+            new_component_labels[i] = np.random.choice(self.ncomponents, p=cluster_prob[i])
 
         return new_component_labels
 
