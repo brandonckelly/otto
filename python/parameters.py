@@ -249,20 +249,23 @@ class MixLogNegBinPars(Parameter):
         component_counts = self.counts[component_idx]
         unique_idx = self.unique_idx[component_idx]
         ndata = len(component_counts)
-        total_counts = np.sum(component_counts)
 
         vcentered = value - self.prior_mu.value
         logpost = -0.5 * vcentered.dot(linalg.inv(self.prior_covar.value).dot(vcentered))  # the prior
 
-        # likelihood contribution
-        logpost += gammaln(beta_a + total_counts) + \
-                   gammaln(beta_b + ndata * nfailure) - \
-                   gammaln(beta_a + beta_b + total_counts + ndata * nfailure)
+        if ndata > 0:
+            # likelihood contribution
+            logpost += ndata * (gammaln(beta_a + beta_b) - gammaln(beta_a) - gammaln(beta_b) +
+                                gammaln(beta_a + nfailure) - gammaln(nfailure))
+            logpost -= self.gammaln_counts[component_idx]
 
-        # only compute log gamma function for unique values of self.counts, since expensive
-        gammaln_counts_value_unique = gammaln(self.unique_counts + nfailure)
-        logpost += np.sum(gammaln_counts_value_unique[unique_idx] - self.gammaln_counts[component_idx]) - \
-                   ndata * gammaln(nfailure)
+            # only compute log gamma function for unique values of self.counts, since expensive
+            gammaln_counts_nfailure_unique = gammaln(self.unique_counts + nfailure)
+            gammaln_counts_b_unique = gammaln(self.unique_counts + beta_b)
+            gammaln_counts_abn_unique = gammaln(self.unique_counts + beta_a + beta_b + nfailure)
+
+            logpost += np.sum(gammaln_counts_nfailure_unique[unique_idx] + gammaln_counts_b_unique[unique_idx] -
+                              gammaln_counts_abn_unique[unique_idx])
 
         return logpost
 
@@ -333,18 +336,22 @@ class LogBinProbsAlpha(Parameter):
         vcentered = value_transformed - self.prior_mu.value
         logprior = jacobian + np.sum(-0.5 * vcentered ** 2 / self.prior_var)
 
-        # ### the likelihood
+        if ndata_k > 0:
+            # the likelihood
 
-        gammaln_bin_counts_alpha = gammaln(counts_per_bin_k + alphas)
-        gammaln_counts_conc = gammaln(self.unique_counts + concentration)
+            gammaln_bin_counts_alpha = gammaln(counts_per_bin_k + alphas)
+            gammaln_counts_conc = gammaln(self.unique_counts + concentration)
 
-        # sum loglik over bins for each data point
-        loglik = self.gammaln_counts[component_idx].sum() + \
-                 ndata_k * gammaln(concentration) - \
-                 np.sum(gammaln_counts_conc[unique_idx_k]) + \
-                 np.sum(gammaln_bin_counts_alpha) - \
-                 np.sum(self.gammaln_counts_per_bin[component_idx]) - \
-                 ndata_k * np.sum(gammaln(alphas))
+            # sum loglik over bins for each data point
+            loglik = self.gammaln_counts[component_idx].sum() + \
+                     ndata_k * gammaln(concentration) - \
+                     np.sum(gammaln_counts_conc[unique_idx_k]) + \
+                     np.sum(gammaln_bin_counts_alpha) - \
+                     np.sum(self.gammaln_counts_per_bin[component_idx]) - \
+                     ndata_k * np.sum(gammaln(alphas))
+
+        else:
+            loglik = 0.0
 
         logpost = loglik + logprior
         return logpost
