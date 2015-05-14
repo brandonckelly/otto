@@ -21,6 +21,15 @@ def alpha_transform(log_alpha):
     return np.concatenate(([alpha_0], y))
 
 
+def alpha_inverse_transform(alpha_inverse):
+    alpha_sum = np.exp(alpha_inverse[0])
+    y = alpha_inverse[1:]
+    alpha = alpha_sum * np.exp(y) / (1.0 + np.sum(np.exp(y)))
+    alpha = np.append(alpha, alpha_sum / (1.0 + np.sum(np.exp(y))))
+
+    return alpha
+
+
 def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
     nbins = counts_per_bin.shape[1]
     assert nbins == 93

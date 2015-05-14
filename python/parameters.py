@@ -200,7 +200,7 @@ class LogBinProbsGamma(Parameter):
 
 class MixLogNegBinPars(Parameter):
     def __init__(self, counts, label, component_label, track=True):
-        super(LogNegBinCounts, self).__init__(label, track)
+        super(MixLogNegBinPars, self).__init__(label, track)
         self.counts = counts - 1  # data
         self.prior_mu = None
         self.prior_covar = None
@@ -222,8 +222,8 @@ class MixLogNegBinPars(Parameter):
 
         self.prior_mu = prior_mu
         self.prior_covar = prior_covar
-        prior_mu.add_child(self)
-        prior_covar.add_child(self)
+        prior_mu.children.append(self)
+        prior_covar.children.append(self)
 
     def initialize(self):
         if self.prior_mu is None or self.prior_covar is None or self.components is None:
@@ -269,7 +269,7 @@ class MixLogNegBinPars(Parameter):
 
 class LogBinProbsAlpha(Parameter):
     def __init__(self, counts_per_bin, label, component_label, track=True):
-        super(LogBinProbsGamma, self).__init__(label, track)
+        super(LogBinProbsAlpha, self).__init__(label, track)
         self.prior_mu = None
         self.prior_var = None
         self.counts_per_bin = counts_per_bin
@@ -474,9 +474,9 @@ class StickWeight(Parameter):
 
     def random_draw(self):
         new_weight = np.empty(self.components.ncomponents - 1)
-        n_k = np.empty_like(new_weight)
+        n_k = np.empty(self.components.ncomponents)
         for k in range(self.components.ncomponents):
-            n_k[k] = np.sum(self.components == k)
+            n_k[k] = np.sum(self.components.value == k)
         for k in range(self.components.ncomponents - 1):
             new_weight[k] = np.random.beta(1 + n_k[k], self.concentration.value + np.sum(n_k[k+1:]))
 
@@ -499,14 +499,14 @@ class DPconcentration(Parameter):
     def random_draw(self):
         ncomponents = len(self.stick_weights.value) + 1.0
         shape = ncomponents - 1 + self.prior_shape
-        scale = self.prior_scale - np.sum(np.log(1.0 - self.stick_weights))
+        scale = self.prior_scale - np.sum(np.log(1.0 - self.stick_weights.value))
 
         return np.random.gamma(shape, 1.0 / scale)
 
 
 class PriorMu(Parameter):
     def __init__(self, label, prior_mean, prior_var, track=True, transform=None):
-        super(PriorVar, self).__init__(label, track)
+        super(PriorMu, self).__init__(label, track)
         self.children = []
         self.prior_mean = prior_mean
         self.prior_var = prior_var
@@ -562,6 +562,7 @@ class PriorMu(Parameter):
         else:
             post_var = 1.0 / post_precision
             post_mean *= post_var
+            post_var = np.diag(post_var)
 
         return np.random.multivariate_normal(post_mean, post_var)
 

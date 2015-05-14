@@ -6,11 +6,12 @@ import unittest
 import numpy as np
 from bck_mcmc.sampler import Sampler
 from bck_mcmc.steps import RobustAdaptiveMetro
-from parameters import LogNegBinCounts, LogBinProbsGamma, LogConcentration
+from parameters import DPconcentration, StickWeight, MixtureComponents, MixLogNegBinPars, LogBinProbsAlpha, \
+    PriorCovar, PriorMu, PriorVar
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-from run_single_component_sampler import run_sampler
+from run_multi_component_sampler import alpha_transform, alpha_inverse_transform
 from posterior_predictive_check import negbin_sample
 
 
@@ -32,7 +33,7 @@ class TestParameters(unittest.TestCase):
         self.bin_counts = np.zeros((self.ndata, self.nbins), dtype=np.int)
 
         self.dp_concentration = 1.0
-        self.stick_weights = np.random.beta(1.0, self.dp_concentration)
+        self.stick_weights = np.random.beta(1.0, self.dp_concentration, self.ncomponents)
         self.cluster_weights = np.zeros(self.ncomponents)
         self.cluster_weights[0] = self.stick_weights[0]
         for k in range(1, self.ncomponents - 1):
@@ -47,35 +48,137 @@ class TestParameters(unittest.TestCase):
                                       [0.005, 0.0, 0.1 ** 2]])
 
         negbin_pars = np.random.multivariate_normal(self.negbin_mu, self.negbin_covar, self.ncomponents)
-        self.nfailures = np.exp(negbin_pars[0])
-        self.beta_a = np.exp(negbin_pars[1])
-        self.beta_b = np.exp(negbin_pars[2])
+        self.nfailures = np.exp(negbin_pars[:, 0])
+        self.beta_a = np.exp(negbin_pars[:, 1])
+        self.beta_b = np.exp(negbin_pars[:, 2])
 
-        self.alpha_mu = np.array([np.log(5)] + [0] * (self.nbins - 1))
-        self.alpha_var = np.empty_like(self.alpha_mu).fill(0.1 ** 2)
+        self.alpha_inverse_mu = np.array([np.log(5)] + [0] * (self.nbins - 1))
+        self.alpha_inverse_var = np.ones_like(self.alpha_inverse_mu) * 0.1 ** 2
 
-        self.alpha = np.exp(self.alpha_mu +
-                            np.sqrt(self.alpha_var) * np.random.standard_normal((self.nbins, self.ncomponents)))
+        self.alpha = np.zeros((self.nbins, self.ncomponents))
+        for k in range(self.ncomponents):
+            # on the log scale
+            alpha_inverse = self.alpha_inverse_mu + \
+                            np.sqrt(self.alpha_inverse_var) * np.random.standard_normal(self.nbins)
+            self.alpha[:, k] = alpha_inverse_transform(alpha_inverse)
+
 
         for k in range(self.ncomponents):
             k_idx = np.where(self.component_labels == k)[0]
             nk = len(k_idx)
-            total_counts = bnb_sample(self.nfailures[k], self.beta_a[k], self.beta_b[k], nk)
-            probs = np.random.dirichlet(self.alpha[:, k], nk)
-            for i in range(nk):
-                self.bin_counts[k_idx[i]] = np.random.multinomial(total_counts[i], probs[i])
+            if nk > 0:
+                total_counts = bnb_sample(self.nfailures[k], self.beta_a[k], self.beta_b[k], nk)
+                probs = np.random.dirichlet(self.alpha[:, k], nk)
+                for i in range(nk):
+                    self.bin_counts[k_idx[i]] = np.random.multinomial(total_counts[i], probs[i])
 
         self.niter = 10000
         self.nburn = 2500
 
     def test_dp_concentration(self):
-        pass
+        dp_conc = DPconcentration('dp-alpha', 1.0, 1.0)
+        stick_weights = StickWeight('stick')
+        stick_weights.value = self.stick_weights
+        dp_conc.stick_weights = stick_weights
+        dp_conc.initialize()
+        dp_draws = np.empty(self.niter)
+        for i in range(self.niter):
+            dp_draws[i] = dp_conc.random_draw()
+
+        dp_low = np.percentile(dp_draws, 2.5)
+        dp_high = np.percentile(dp_draws, 97.5)
+
+        self.assertLess(dp_low, self.dp_concentration)
+        self.assertGreater(dp_high, self.dp_concentration)
+
+        plt.hist(dp_draws, bins=100)
+        plt.vlines(self.dp_concentration, plt.ylim()[0], plt.ylim()[1])
+        plt.xlabel('DP Concentration')
+        plt.show()
 
     def test_stick_weights(self):
-        pass
+        stick_weights = StickWeight('stick')
+        dp_conc = DPconcentration('dp-alpha', 1.0, 1.0)
+        labels = MixtureComponents('labels', self.bin_counts)
+
+        dp_conc.value = self.dp_concentration
+        labels.value = self.component_labels
+        labels.ncomponents = self.ncomponents
+
+        stick_weights.components = labels
+        stick_weights.concentration = dp_conc
+
+        stick_weights.initialize()
+        stick_draws = np.empty((self.niter, self.ncomponents - 1))
+        for i in range(self.niter):
+            stick_draws[i] = stick_weights.random_draw()
+
+        s_low = np.percentile(stick_draws, 1.0, axis=0)
+        s_high = np.percentile(stick_draws, 99.0, axis=0)
+
+        for k in range(self.ncomponents - 1):
+            self.assertLess(s_low[k], self.stick_weights[k])
+            self.assertGreater(s_high[k], self.stick_weights[k])
+            plt.hist(stick_draws[:, k], bins=100)
+            plt.vlines(self.stick_weights[k], plt.ylim()[0], plt.ylim()[1])
+            plt.xlabel('Stick Weight ' + str(k))
+            plt.show()
 
     def test_prior_mu(self):
-        pass
+
+        # first test prior mean without a transform
+        mu = PriorMu('prior-mu', np.zeros(3), 10.0 * np.identity(3))
+        sigsqr = PriorCovar('prior-covar', 3 * np.ones(3), np.identity(3))
+        sigsqr.value = self.negbin_covar
+        mu.child_var = sigsqr
+
+        for k in range(self.ncomponents):
+            negbin_k = MixLogNegBinPars(self.bin_counts.sum(axis=1), 'log-negbin-' + str(k), k)
+            negbin_k.value = np.log([self.nfailures[k], self.beta_a[k], self.beta_b[k]])
+            negbin_k.connect_prior(mu, sigsqr)
+
+        mu.initialize()
+        mu_draws = np.zeros((self.niter, 3))
+        for i in range(self.niter):
+            mu_draws[i] = mu.random_draw()
+
+        mu_low = np.percentile(mu_draws, 1.0, axis=0)
+        mu_high = np.percentile(mu_draws, 99.0, axis=0)
+
+        for j in range(3):
+            self.assertLess(mu_low[j], self.negbin_mu[j])
+            self.assertGreater(mu_high[j], self.negbin_mu[j])
+            # plt.hist(mu_draws[:, j], bins=100)
+            # plt.vlines(self.negbin_mu[j], plt.ylim()[0], plt.ylim()[1])
+            # plt.xlabel('Negbin Mu ' + str(j))
+            # plt.show()
+
+        # now test prior mean with a transform
+        mu = PriorMu('prior-mu', np.zeros(self.nbins), 10.0 * np.ones(self.nbins), transform=alpha_transform)
+        sigsqr = PriorVar('prior-var', np.ones(self.nbins), np.ones(self.nbins), transform=alpha_transform)
+        sigsqr.value = self.alpha_inverse_var
+
+        mu.child_var = sigsqr
+        for k in range(self.ncomponents):
+            alpha_k = LogBinProbsAlpha(self.bin_counts, 'log-alpha-' + str(k), k)
+            alpha_k.value = np.log(self.alpha[:, k])
+            alpha_k.connect_prior(mu, sigsqr)
+
+        mu.initialize()
+        mu_draws = np.zeros((self.niter, self.nbins))
+        for i in range(self.niter):
+            mu_draws[i] = mu.random_draw()
+
+        mu_low = np.percentile(mu_draws, 1.0, axis=0)
+        mu_high = np.percentile(mu_draws, 99.0, axis=0)
+
+        for j in range(self.nbins):
+            self.assertLess(mu_low[j], self.alpha_inverse_mu[j])
+            self.assertGreater(mu_high[j], self.alpha_inverse_mu[j])
+            plt.hist(mu_draws[:, j], bins=100)
+            plt.vlines(self.alpha_inverse_mu[j], plt.ylim()[0], plt.ylim()[1])
+            plt.xlabel('Alpha Inverse Mu ' + str(j))
+            plt.show()
 
     def test_prior_var(self):
         pass
