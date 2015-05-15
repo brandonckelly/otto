@@ -370,7 +370,7 @@ class MixtureComponents(Parameter):
         # precompute quantities
         self.gammaln_counts_per_bin = gammaln(counts_per_bin + 1)
         self.gammaln_counts_minus_1 = gammaln(counts_per_bin.sum(axis=1))  # negative binomial parameter is wrt n - 1
-        self.gammaln_counts = gammaln(counts_per_bin.sum(axis=1))
+        self.gammaln_counts = gammaln(counts_per_bin.sum(axis=1) + 1.0)
 
     def add_component(self, negbin, alpha, component_label):
         self.negbin_pars[component_label] = negbin
@@ -404,8 +404,6 @@ class MixtureComponents(Parameter):
 
         # first compute part of posterior that can be vectorized
         logpost = np.empty((self.ndata, self.ncomponents))
-        total_counts = np.zeros(self.ncomponents)
-        ndata_component = np.zeros(self.ncomponents)
 
         # get the cluster weights
         cluster_weights = np.zeros(self.ncomponents)
@@ -432,7 +430,7 @@ class MixtureComponents(Parameter):
                             gammaln(counts + beta_a + beta_b + nfailure) + \
                             self.gammaln_counts + \
                             gammaln(alpha_sum) - \
-                            gammaln(counts + alpha_sum) - \
+                            gammaln(counts + 1 + alpha_sum) + \
                             np.sum(gammaln(self.counts_per_bin + alpha) -
                                    self.gammaln_counts_per_bin -
                                    gammaln(alpha), axis=1) + \

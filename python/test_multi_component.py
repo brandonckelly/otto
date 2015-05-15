@@ -29,7 +29,7 @@ class TestParameters(unittest.TestCase):
 
         self.ndata = 1000
         self.nbins = 10
-        self.ncomponents = 100
+        self.ncomponents = 10
         self.bin_counts = np.zeros((self.ndata, self.nbins), dtype=np.int)
 
         self.dp_concentration = 1.0
@@ -76,7 +76,17 @@ class TestParameters(unittest.TestCase):
                     else:
                         self.bin_counts[k_idx[i]] = np.random.multinomial(total_counts[i], probs)
 
-        self.niter = 20000
+                # mean_counts = self.bin_counts[k_idx].sum(axis=1).mean()
+                # mean_true = self.nfailures[k] * self.beta_b[k] / (self.beta_a[k] - 1)
+                # mean_bc = self.bin_counts[k_idx].mean(axis=0)
+                # mean_true_alpha = mean_counts * self.alpha[:, k] / self.alpha[:, k].sum()
+                # print k, mean_counts, mean_true
+                # print mean_bc
+                # print mean_true_alpha
+                # print ''
+                #
+
+        self.niter = 2000
         self.nburn = 2500
 
     def test_dp_concentration(self):
@@ -242,7 +252,45 @@ class TestParameters(unittest.TestCase):
                 plt.show()
 
     def test_components(self):
-        pass
+
+        labels = MixtureComponents('z', self.bin_counts)
+        sticks = StickWeight('sticks')
+        sticks.value = self.stick_weights
+        labels.stick_weights = sticks
+
+        for k in range(self.ncomponents):
+            negbin_k = MixLogNegBinPars(self.bin_counts.sum(axis=1), 'log-negbin-' + str(k), k)
+            negbin_k.value = np.log([self.nfailures[k], self.beta_a[k], self.beta_b[k]])
+            # negbin_k.value = np.log([self.nfailures[j], self.beta_a[j], self.beta_b[j]])
+
+            alpha_k = LogBinProbsAlpha(self.bin_counts, 'log-alpha-' + str(k), k)
+            alpha_k.value = np.log(self.alpha[:, k])
+
+            labels.add_component(negbin_k, alpha_k, k)
+
+        labels.initialize()
+        label_draws = np.empty((self.niter, self.ndata), dtype=int)
+        for i in range(self.niter):
+            if i % 1000 == 0:
+                print i
+            label_draws[i] = labels.random_draw()
+
+        for k in range(self.ncomponents):
+            nk = (label_draws == k).sum(axis=1)
+            plt.hist(nk, bins=min(100, len(np.unique(nk)) * 2))
+            nk_true = np.sum(self.component_labels == k)
+            plt.vlines(nk_true, plt.ylim()[0], plt.ylim()[1], lw=3, color='red')
+            plt.title('Component ' + str(k))
+            plt.show()
+
+        zcount = 0
+        for i in range(self.ndata):
+            zpick = np.bincount(label_draws[:, i]).argmax()
+            zcount += zpick == self.component_labels[i]
+
+        print 'Misclassification rate is', zcount / float(self.ndata)
+        print 'No-information rate is', 1.0 - self.cluster_weights.max()
+
 
     def test_NegBinCounts(self):
 
