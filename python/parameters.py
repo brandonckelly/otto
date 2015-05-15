@@ -229,12 +229,16 @@ class MixLogNegBinPars(Parameter):
         if self.prior_mu is None or self.prior_covar is None or self.components is None:
             raise ValueError("Must initialize the prior and component objects.")
 
-        beta_a = np.random.uniform(1.0, 3.0)
+        beta_a = np.random.uniform(2.0, 3.0)
         beta_b = np.random.uniform(1.0, 3.0)
 
-        # estimate nfailure from mean
-        mean_counts = np.mean(self.counts[self.components.value == self.component_label])
-        nfailure = mean_counts * beta_b / (beta_a - 1.0) * (1.0 + np.random.uniform(-0.1, 0.1))
+        nk = np.sum(self.components.value == self.component_label)
+        if nk > 1:
+            # estimate nfailure from mean counts
+            mean_counts = np.mean(self.counts[self.components.value == self.component_label])
+            nfailure = mean_counts * beta_b / (beta_a - 1.0) * (1.0 + np.random.uniform(-0.1, 0.1))
+        else:
+            nfailure = np.random.uniform(5, 100)
 
         self.value = np.log([nfailure, beta_a, beta_b])
 
@@ -257,7 +261,7 @@ class MixLogNegBinPars(Parameter):
             # likelihood contribution
             logpost += ndata * (gammaln(beta_a + beta_b) - gammaln(beta_a) - gammaln(beta_b) +
                                 gammaln(beta_a + nfailure) - gammaln(nfailure))
-            logpost -= self.gammaln_counts[component_idx]
+            logpost -= np.sum(self.gammaln_counts[component_idx])
 
             # only compute log gamma function for unique values of self.counts, since expensive
             gammaln_counts_nfailure_unique = gammaln(self.unique_counts + nfailure)
@@ -306,14 +310,18 @@ class LogBinProbsAlpha(Parameter):
             raise ValueError("Must initialize prior and component objects.")
 
         component_idx = self.components.value == self.component_label
-        counts_per_bin_k = self.counts_per_bin[component_idx]
-        bin_fracs_k = counts_per_bin_k / counts_per_bin_k.sum(axis=1)[:, np.newaxis].astype(float)
-        avg_bin_frac = bin_fracs_k.mean(axis=0)
-        var_bin_frac = bin_fracs_k.var(axis=0)
+        nk = np.sum(component_idx)
+        if nk > 1:
+            counts_per_bin_k = self.counts_per_bin[component_idx]
+            bin_fracs_k = counts_per_bin_k / counts_per_bin_k.sum(axis=1)[:, np.newaxis].astype(float)
+            avg_bin_frac = bin_fracs_k.mean(axis=0)
+            var_bin_frac = bin_fracs_k.var(axis=0)
 
-        concentration = np.median(avg_bin_frac * (1.0 - avg_bin_frac) / var_bin_frac - 1.0)
-        concentration = max(concentration, 1.0)
-        alphas = concentration * avg_bin_frac
+            concentration = np.median(avg_bin_frac * (1.0 - avg_bin_frac) / var_bin_frac - 1.0)
+            concentration = max(concentration, 1.0)
+            alphas = concentration * avg_bin_frac
+        else:
+            alphas = np.ones(self.counts_per_bin.shape[1])
 
         self.value = np.log(alphas)
 
@@ -374,7 +382,9 @@ class MixtureComponents(Parameter):
 
     def add_component(self, negbin, alpha, component_label):
         self.negbin_pars[component_label] = negbin
+        self.negbin_pars[component_label].components = self
         self.alphas[component_label] = alpha
+        self.alphas[component_label].components = self
         self.ncomponents = len(self.negbin_pars)
 
     def initialize(self):

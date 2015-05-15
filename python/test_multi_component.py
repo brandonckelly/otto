@@ -86,7 +86,7 @@ class TestParameters(unittest.TestCase):
                 # print ''
                 #
 
-        self.niter = 2000
+        self.niter = 7500
         self.nburn = 2500
 
     def test_dp_concentration(self):
@@ -291,31 +291,100 @@ class TestParameters(unittest.TestCase):
         print 'Misclassification rate is', zcount / float(self.ndata)
         print 'No-information rate is', 1.0 - self.cluster_weights.max()
 
+    def test_negbin(self):
 
-    def test_NegBinCounts(self):
+        labels = MixtureComponents('z', self.bin_counts)
+        labels.value = self.component_labels
+        prior_mu = PriorMu('prior-mean', np.zeros(3), np.identity(3))
+        prior_var = PriorCovar('prior-covar', 1, np.identity(3))
+        prior_mu.value = self.negbin_mu
+        prior_var.value = self.negbin_covar
 
-        negbin = LogNegBinCounts(self.bin_counts.sum(axis=1), 'log-neg-bin')
-        ram = RobustAdaptiveMetro(negbin, initial_covar=0.01, stop_adapting_iter=self.nburn)
-        sampler = Sampler()
-        sampler.add_step(ram)
-        sampler.run(self.niter, nburn=self.nburn, verbose=True)
+        ram_steps = []
 
-        samples = np.array(sampler.samples['log-neg-bin'])[:, 0]
-        samples = pd.Series(samples, name='log-neg-bin')
+        for k in range(self.ncomponents):
+            negbin_k = MixLogNegBinPars(self.bin_counts.sum(axis=1), 'log-negbin-' + str(k), k)
 
-        samples = np.exp(samples)
-        lower = np.percentile(samples, 2.5)
-        upper = np.percentile(samples, 97.5)
+            alpha_k = LogBinProbsAlpha(self.bin_counts, 'log-alpha-' + str(k), k)
+            alpha_k.value = np.log(self.alpha[:, k])
 
-        self.assertGreater(upper, self.nfailures)
-        self.assertLess(lower, self.nfailures)
+            labels.add_component(negbin_k, alpha_k, k)
 
-        samples.plot(style='.')
-        plt.plot(plt.xlim(), [self.nfailures] * 2, 'k')
-        plt.show()
-        samples.plot(kind='kde')
-        plt.plot([self.nfailures] * 2, plt.ylim(), 'k')
-        plt.show()
+            negbin_k.connect_prior(prior_mu, prior_var)
+
+            negbin_k.initialize()
+            ram_step = RobustAdaptiveMetro(negbin_k, initial_covar=np.identity(3) / 100.0, target_rate=0.3,
+                                           stop_adapting_iter=self.nburn)
+            ram_steps.append(ram_step)
+
+        negbin_draws= np.empty((self.niter - self.nburn, 3, self.ncomponents))
+        for i in range(self.niter):
+            if i % 1000 == 0:
+                print i
+            for k, ram in enumerate(ram_steps):
+                ram.do_step()
+                if i >= self.nburn:
+                    negbin_draws[i - self.nburn, :, k] = np.exp(ram.parameter.value)
+
+        for k, ram in enumerate(ram_steps):
+            print ""
+            print k
+            ram.report()
+
+        r_low = np.percentile(negbin_draws[:, 0, :], 0.5, axis=0)
+        r_high = np.percentile(negbin_draws[:, 0, :], 99.5, axis=0)
+        a_low = np.percentile(negbin_draws[:, 1, :], 0.5, axis=0)
+        a_high = np.percentile(negbin_draws[:, 1, :], 99.5, axis=0)
+        b_low = np.percentile(negbin_draws[:, 2, :], 0.5, axis=0)
+        b_high = np.percentile(negbin_draws[:, 2, :], 99.5, axis=0)
+
+        for k in range(self.ncomponents):
+
+            # self.assertLess(r_low[k], self.nfailures)
+            # self.assertGreater(r_high[k], self.nfailures)
+            # self.assertLess(a_low[k], self.beta_a)
+            # self.assertGreater(a_high[k], self.beta_a)
+            # self.assertLess(b_low[k], self.beta_b)
+            # self.assertGreater(b_high[k], self.beta_b)
+            fig = plt.figure()
+            ax = plt.subplot(321)
+            ax.hist(negbin_draws[:, 0, k], bins=25)
+            ax.vlines(self.nfailures[k], plt.ylim()[0], plt.ylim()[1], lw=3, color='red')
+            ax.set_xlabel('n failures')
+            ax.set_title('Component ' + str(k))
+
+            ax = plt.subplot(322)
+            ax.hist(negbin_draws[:, 1, k], bins=25)
+            ax.vlines(self.beta_a[k], plt.ylim()[0], plt.ylim()[1], lw=3, color='red')
+            ax.set_xlabel('beta a')
+            ax.set_title('Component ' + str(k))
+
+            ax = plt.subplot(323)
+            ax.hist(negbin_draws[:, 2, k], bins=25)
+            ax.vlines(self.beta_b[k], plt.ylim()[0], plt.ylim()[1], lw=3, color='red')
+            ax.set_xlabel('beta b')
+            ax.set_title('Component ' + str(k))
+
+            ax = plt.subplot(324)
+            ax.plot(np.log(negbin_draws[:, 0, k]), np.log(negbin_draws[:, 1, k]), '.')
+            ax.set_xlabel('log n failure')
+            ax.set_ylabel('log beta a')
+            ax.plot([np.log(self.nfailures[k])], np.log(self.beta_a[k]), 'ro')
+
+            ax = plt.subplot(325)
+            ax.plot(np.log(negbin_draws[:, 0, k]), np.log(negbin_draws[:, 2, k]), '.')
+            ax.set_xlabel('log n failure')
+            ax.set_ylabel('log beta b')
+            ax.plot([np.log(self.nfailures[k])], np.log(self.beta_b[k]), 'ro')
+
+            ax = plt.subplot(326)
+            ax.plot(np.log(negbin_draws[:, 1, k]), np.log(negbin_draws[:, 2, k]), '.')
+            ax.set_ylabel('log beta b')
+            ax.set_xlabel('log beta a')
+            ax.plot([np.log(self.beta_a[k])], np.log(self.beta_b[k]), 'ro')
+
+            plt.show()
+            plt.close()
 
     def test_Concentration(self):
 

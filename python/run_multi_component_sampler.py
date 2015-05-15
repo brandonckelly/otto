@@ -38,7 +38,8 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
     component_labels = MixtureComponents('component_label', counts_per_bin, track=False)
 
     # prior parameters
-    prior_negbin_mean = PriorMu('negbin-prior-mean', np.array([np.log(10), 0.0, 0.0]), np.diag([10.0, 2.0, 2.0]),
+    prior_negbin_mean = PriorMu('negbin-prior-mean', np.array([np.log(10), np.log(2.0), np.log(2.0)]),
+                                np.diag([10.0, 2.0, 2.0]),
                                 track=False)
     prior_negbin_covar = PriorCovar('negbin-prior-covar', 3, np.eye(3) / 10.0, track=False)
     prior_alpha_mean = PriorMu('alpha-prior-mean', np.array([2.0] + (nbins - 1) * [0]),
