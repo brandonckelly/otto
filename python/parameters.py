@@ -273,6 +273,23 @@ class MixLogNegBinPars(Parameter):
         return logpost
 
 
+def alpha_transform(log_alpha):
+    alpha = np.exp(log_alpha)
+    alpha_0 = np.log(alpha.sum())
+    y = np.log(alpha[:-1] / alpha[-1])
+
+    return np.concatenate(([alpha_0], y))
+
+
+def alpha_inverse_transform(alpha_inverse):
+    alpha_sum = np.exp(alpha_inverse[0])
+    y = alpha_inverse[1:]
+    alpha = alpha_sum * np.exp(y) / (1.0 + np.sum(np.exp(y)))
+    alpha = np.append(alpha, alpha_sum / (1.0 + np.sum(np.exp(y))))
+
+    return alpha
+
+
 class LogBinProbsAlpha(Parameter):
     def __init__(self, counts_per_bin, label, component_label, track=True):
         super(LogBinProbsAlpha, self).__init__(label, track)
@@ -322,13 +339,13 @@ class LogBinProbsAlpha(Parameter):
         else:
             alphas = np.ones(self.counts_per_bin.shape[1])
 
-        self.value = np.log(alphas)
+        self.value = alpha_transform(np.log(alphas))
 
     def logdensity(self, value):
         # transform values
-        alphas = np.exp(value)
+        alphas = alpha_inverse_transform(value)
         concentration = alphas.sum()
-        y = np.log(alphas[:-1] / alphas[-1])
+        # y = np.log(alphas[:-1] / alphas[-1])
 
         # values corresponding to the subset of data associated with this mixture component
         component_idx = self.components.value == self.component_label
@@ -338,9 +355,10 @@ class LogBinProbsAlpha(Parameter):
 
         # the prior
 
-        value_transformed = np.concatenate((np.log([concentration]), y))
-        jacobian = -np.sum(value[:-1]) + np.log(1.0 + np.sum(alphas[:-1] / alphas[-1])) - value_transformed[0]
-        vcentered = value_transformed - self.prior_mu.value
+        # jacobian = -np.sum(value[:-1]) + np.log(1.0 + np.sum(alphas[:-1] / alphas[-1])) - value_transformed[0]
+        jacobian = 0.0
+        # vcentered = value_transformed - self.prior_mu.value
+        vcentered = value - self.prior_mu.value
         logprior = jacobian + np.sum(-0.5 * vcentered ** 2 / self.prior_var.value)
 
         if ndata_k > 0:
@@ -425,7 +443,8 @@ class MixtureComponents(Parameter):
             beta_a = np.exp(self.negbin_pars[k].value[1])
             beta_b = np.exp(self.negbin_pars[k].value[2])
             nfailure = np.exp(self.negbin_pars[k].value[0])
-            alpha = np.exp(self.alphas[k].value)
+            alpha = alpha_inverse_transform(self.alphas[k].value)
+            # alpha = np.exp(self.alphas[k].value)
             alpha_sum = np.sum(alpha)
 
             logpost[:, k] = gammaln(beta_a + beta_b) - \

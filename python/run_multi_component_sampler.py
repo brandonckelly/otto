@@ -6,28 +6,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from parameters import MixLogNegBinPars, MixtureComponents, LogBinProbsAlpha, PriorCovar, PriorMu, PriorVar, \
-    StickWeight, DPconcentration
+    StickWeight, DPconcentration, alpha_inverse_transform, alpha_transform
 from bck_mcmc.sampler import Sampler
 from bck_mcmc.steps import RobustAdaptiveMetro, GibbsStep
 import pickle
 import multiprocessing
-
-
-def alpha_transform(log_alpha):
-    alpha = np.exp(log_alpha)
-    alpha_0 = np.log(alpha.sum())
-    y = np.log(alpha[:-1] / alpha[-1])
-
-    return np.concatenate(([alpha_0], y))
-
-
-def alpha_inverse_transform(alpha_inverse):
-    alpha_sum = np.exp(alpha_inverse[0])
-    y = alpha_inverse[1:]
-    alpha = alpha_sum * np.exp(y) / (1.0 + np.sum(np.exp(y)))
-    alpha = np.append(alpha, alpha_sum / (1.0 + np.sum(np.exp(y))))
-
-    return alpha
 
 
 def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
@@ -43,8 +26,8 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
                                 track=False)
     prior_negbin_covar = PriorCovar('negbin-prior-covar', 5, np.eye(3) / 10.0, track=False)
     prior_alpha_mean = PriorMu('alpha-prior-mean', np.array([np.log(nbins)] + (nbins - 1) * [0]),
-                               np.array([0.5 ** 2] + (nbins - 1) * [0.5 ** 2]), transform=alpha_transform, track=False)
-    prior_alpha_var = PriorVar('alpha-prior-var', 2 * np.ones(nbins), np.ones(nbins) / 10.0, transform=alpha_transform,
+                               np.array([0.5 ** 2] + (nbins - 1) * [0.5 ** 2]), track=False)
+    prior_alpha_var = PriorVar('alpha-prior-var', 2 * np.ones(nbins), np.ones(nbins) / 10.0,
                                track=False)
     prior_negbin_mean.child_var = prior_negbin_covar
     prior_negbin_covar.child_mean = prior_negbin_mean
@@ -65,21 +48,21 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
 
     for k in range(ncomponents):
         negbin = MixLogNegBinPars(counts_per_bin.sum(axis=1), 'negbin-' + str(k), k)
-        log_alpha = LogBinProbsAlpha(counts_per_bin, 'alpha-' + str(k), k)
+        alpha_inverse = LogBinProbsAlpha(counts_per_bin, 'alpha-' + str(k), k)
 
         # connect the parameters
         negbin.connect_prior(prior_negbin_mean, prior_negbin_covar)
-        log_alpha.connect_prior(prior_alpha_mean, prior_alpha_var)
-        component_labels.add_component(negbin, log_alpha, k)
+        alpha_inverse.connect_prior(prior_alpha_mean, prior_alpha_var)
+        component_labels.add_component(negbin, alpha_inverse, k)
 
         # add steps for this component
         sampler.add_step(RobustAdaptiveMetro(negbin, stop_adapting_iter=stop_adapting,
                                              initial_covar=0.01 * np.identity(3), target_rate=0.3))
-        sampler.add_step(RobustAdaptiveMetro(log_alpha, stop_adapting_iter=stop_adapting,
+        sampler.add_step(RobustAdaptiveMetro(alpha_inverse, stop_adapting_iter=stop_adapting,
                                              initial_covar=0.001 * np.identity(nbins), target_rate=0.15))
 
     # steps for prior
-    sampler.add_step(GibbsStep(prior_alpha_mean))  # means need to be initialized first
+    sampler.add_step(GibbsStep(prior_alpha_mean))  # means need to be initialized last
     sampler.add_step(GibbsStep(prior_alpha_var))
     sampler.add_step(GibbsStep(prior_negbin_mean))
     sampler.add_step(GibbsStep(prior_negbin_covar))
@@ -100,7 +83,9 @@ def get_mcmc_samples(sampler, ncomponents):
         negbin_samples_k = np.exp(np.array(sampler.samples['negbin-' + str(k)]))
         data_columns.append(negbin_samples_k)
 
-        alpha_samples_k = np.exp(np.array(sampler.samples['alpha-' + str(k)]))
+        alpha_samples_k = np.array(sampler.samples['alpha-' + str(k)])
+        for i in range(alpha_samples_k.shape[0]):
+            alpha_samples_k[i] = alpha_inverse_transform(alpha_samples_k[i])
         data_columns.append(alpha_samples_k)
 
         negbin_cols = ['nfailure', 'beta_a', 'beta_b']
@@ -166,14 +151,14 @@ def run_sampler(counts_per_bin, nsamples, ncomponents, burniter=None, nthin=1, n
 
 if __name__ == "__main__":
 
-    ncomponents = 20
+    ncomponents = 15
 
     project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
     data_dir = os.path.join(project_dir, 'data')
     plot_dir = os.path.join(project_dir, 'plots')
 
     nsamples = 5000
-    burniter = 1
+    burniter = 2500
 
     ntrain = sys.maxint
 
@@ -184,7 +169,7 @@ if __name__ == "__main__":
 
     class_labels = train_df['target'].unique()
 
-    for target in class_labels:
+    for target in class_labels[:1]:
         print ''
         print 'Doing class', target
         this_df = train_df.query('target == @target')
@@ -195,6 +180,6 @@ if __name__ == "__main__":
 
         print 'Training with', len(this_df), 'data points...'
 
-        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, burniter=burniter, nthin=1, n_jobs=-1)
+        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, burniter=burniter, nthin=1, n_jobs=3)
 
         samples.to_hdf(os.path.join(data_dir, 'multi_component_samples_' + target + '.h5'), 'df')
