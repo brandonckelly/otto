@@ -38,20 +38,25 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
     component_labels = MixtureComponents('component_label', counts_per_bin, track=False)
 
     # prior parameters
-    prior_negbin_mean = PriorMu('negbin-prior-mean', np.array([np.log(10), np.log(2.0), np.log(2.0)]),
-                                np.diag([10.0, 2.0, 2.0]),
+    prior_negbin_mean = PriorMu('negbin-prior-mean', np.array([np.log(10), np.log(10.0), np.log(10.0)]),
+                                np.diag([1.0, 0.5 ** 2, 0.5 ** 2]),
                                 track=False)
-    prior_negbin_covar = PriorCovar('negbin-prior-covar', 3, np.eye(3) / 10.0, track=False)
-    prior_alpha_mean = PriorMu('alpha-prior-mean', np.array([2.0] + (nbins - 1) * [0]),
-                               np.array([1.0] + (nbins - 1) * [3]), transform=alpha_transform, track=False)
-    prior_alpha_var = PriorVar('alpha-prior-var', np.ones(nbins), np.ones(nbins) / 10.0, transform=alpha_transform,
+    prior_negbin_covar = PriorCovar('negbin-prior-covar', 5, np.eye(3) / 10.0, track=False)
+    prior_alpha_mean = PriorMu('alpha-prior-mean', np.array([np.log(nbins)] + (nbins - 1) * [0]),
+                               np.array([0.5 ** 2] + (nbins - 1) * [0.5 ** 2]), transform=alpha_transform, track=False)
+    prior_alpha_var = PriorVar('alpha-prior-var', 2 * np.ones(nbins), np.ones(nbins) / 10.0, transform=alpha_transform,
                                track=False)
+    prior_negbin_mean.child_var = prior_negbin_covar
+    prior_negbin_covar.child_mean = prior_negbin_mean
+    prior_alpha_mean.child_var = prior_alpha_var
+    prior_alpha_var.child_mean = prior_alpha_mean
 
     stick = StickWeight('stick-weights')
-    component_labels.st = stick
+    component_labels.stick_weights = stick
     dp_conc = DPconcentration('dp-concentration', 1.0, 1.0)
     dp_conc.stick_weights = stick
     stick.concentration = dp_conc
+    stick.components = component_labels
 
     # add steps for parameters to be initialized first
     sampler.add_step(GibbsStep(dp_conc))
@@ -69,9 +74,9 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
 
         # add steps for this component
         sampler.add_step(RobustAdaptiveMetro(negbin, stop_adapting_iter=stop_adapting,
-                                             initial_covar=0.01 * np.identity(3)))
+                                             initial_covar=0.01 * np.identity(3), target_rate=0.3))
         sampler.add_step(RobustAdaptiveMetro(log_alpha, stop_adapting_iter=stop_adapting,
-                                             initial_covar=0.001 * np.identity(nbins)))
+                                             initial_covar=0.001 * np.identity(nbins), target_rate=0.15))
 
     # steps for prior
     sampler.add_step(GibbsStep(prior_alpha_mean))  # means need to be initialized first
@@ -85,7 +90,7 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
 def get_mcmc_samples(sampler, ncomponents):
 
     stick_samples = sampler.samples['stick-weights']
-    columns = [('Stick Weights', str(k)) for k in range(ncomponents)]
+    columns = [('Stick Weights', str(k)) for k in range(ncomponents-1)]
     dp_conc_samples = sampler.samples['dp-concentration']
     columns.append(('DP Concentration', 'DP Concentration'))
 
@@ -106,7 +111,7 @@ def get_mcmc_samples(sampler, ncomponents):
         alpha_cols = [('Component ' + str(k), c) for c in alpha_cols]
         columns.extend(alpha_cols)
 
-    samples = pd.DataFrame(np.column_stack(data_columns), columns=columns)
+    samples = pd.DataFrame(np.column_stack(data_columns), columns=pd.MultiIndex.from_tuples(columns))
 
     return samples
 
@@ -114,12 +119,13 @@ def get_mcmc_samples(sampler, ncomponents):
 def run_parallel_chains_helper_(args):
     np.random.seed()
     counts_per_bin, ncomponents, nsamples, burniter, nthin, chain_id = args
-    sampler = build_sampler(counts_per_bin, ncomponents, stop_adapting=burniter)
+    sampler = build_sampler(counts_per_bin, ncomponents)
 
     sampler.run(nsamples, nburn=burniter, nthin=nthin, verbose=True)
 
     for step in sampler.steps:
-        step.report()
+        if isinstance(step, RobustAdaptiveMetro):
+            step.report()
 
     # save the rng seed before pickling
     sampler.rng_state = np.random.get_state()
@@ -127,7 +133,7 @@ def run_parallel_chains_helper_(args):
                            str(chain_id) + '.pickle'), 'wb') as f:
         pickle.dump(sampler, f)
 
-    samples = get_mcmc_samples(sampler)
+    samples = get_mcmc_samples(sampler, ncomponents)
     return samples
 
 
@@ -160,14 +166,14 @@ def run_sampler(counts_per_bin, nsamples, ncomponents, burniter=None, nthin=1, n
 
 if __name__ == "__main__":
 
-    ncomponents = 10
+    ncomponents = 20
 
     project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
     data_dir = os.path.join(project_dir, 'data')
     plot_dir = os.path.join(project_dir, 'plots')
 
     nsamples = 5000
-    burniter = 5000
+    burniter = 1
 
     ntrain = sys.maxint
 
@@ -178,7 +184,7 @@ if __name__ == "__main__":
 
     class_labels = train_df['target'].unique()
 
-    for target in class_labels[-2:]:
+    for target in class_labels:
         print ''
         print 'Doing class', target
         this_df = train_df.query('target == @target')
@@ -189,6 +195,6 @@ if __name__ == "__main__":
 
         print 'Training with', len(this_df), 'data points...'
 
-        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, burniter=burniter, nthin=1)
+        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, burniter=burniter, nthin=1, n_jobs=-1)
 
         samples.to_hdf(os.path.join(data_dir, 'multi_component_samples_' + target + '.h5'), 'df')
