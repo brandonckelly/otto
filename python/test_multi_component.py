@@ -24,8 +24,7 @@ def bnb_sample(r, a, b, n):
 class TestParameters(unittest.TestCase):
 
     def setUp(self):
-        np.random.seed(123)
-
+        np.random.seed(1234)
 
         self.ndata = 1000
         self.nbins = 10
@@ -46,6 +45,7 @@ class TestParameters(unittest.TestCase):
         self.negbin_covar = np.array([[0.25 ** 2, -0.01, 0.005],
                                       [-0.01, 0.1 ** 2, 0.0],
                                       [0.005, 0.0, 0.1 ** 2]])
+        self.negbin_covar *= 9.0
 
         negbin_pars = np.random.multivariate_normal(self.negbin_mu, self.negbin_covar, self.ncomponents)
         self.nfailures = np.exp(negbin_pars[:, 0])
@@ -54,6 +54,7 @@ class TestParameters(unittest.TestCase):
 
         self.alpha_inverse_mu = np.array([np.log(5)] + [0] * (self.nbins - 1))
         self.alpha_inverse_var = np.ones_like(self.alpha_inverse_mu) * 0.1 ** 2
+        self.alpha_inverse_var * 36.0
 
         self.alpha = np.zeros((self.nbins, self.ncomponents))
         self.alpha_inverse = np.zeros_like(self.alpha)
@@ -386,124 +387,51 @@ class TestParameters(unittest.TestCase):
             plt.show()
             plt.close()
 
-    def test_Concentration(self):
+    def test_alpha(self):
 
-        conc = LogConcentration(self.bin_counts, 'log-c')
-        gamma = LogBinProbsGamma(self.bin_counts, 'log-q')
-        gamma.value = np.log(self.gamma)
-        conc.connect_log_gamma(gamma)
-        ram = RobustAdaptiveMetro(conc, initial_covar=0.01, stop_adapting_iter=self.nburn)
-        sampler = Sampler()
-        sampler.add_step(ram)
-        sampler.run(self.niter, nburn=self.nburn, verbose=True)
+        labels = MixtureComponents('z', self.bin_counts)
+        labels.value = self.component_labels
+        prior_mu = PriorMu('prior-mean', np.zeros(self.nbins), np.identity(self.nbins))
+        prior_var = PriorVar('prior-var', np.ones(self.nbins), np.ones(self.nbins))
+        prior_mu.value = self.alpha_inverse_mu
+        prior_var.value = self.alpha_inverse_var
 
-        samples = np.array(sampler.samples['log-c'])[:, 0]
-        samples = pd.Series(samples, name='log-c')
+        ram_steps = []
 
-        samples = np.exp(samples)
-        lower = np.percentile(samples, 2.5)
-        upper = np.percentile(samples, 97.5)
+        for k in range(self.ncomponents):
+            alpha_k = LogBinProbsAlpha(self.bin_counts, 'a' + str(k), k)
 
-        self.assertGreater(upper, self.concentration)
-        self.assertLess(lower, self.concentration)
+            negbin_k = MixLogNegBinPars(self.bin_counts, 'log-bnb-' + str(k), k)
+            negbin_k.value = np.log([self.nfailures, self.beta_a, self.beta_b])
 
-        samples.plot(style='.')
-        plt.plot(plt.xlim(), [self.concentration] * 2, 'k')
-        plt.show()
-        samples.plot(kind='kde')
-        plt.plot([self.concentration] * 2, plt.ylim(), 'k')
-        plt.show()
+            labels.add_component(negbin_k, alpha_k, k)
 
-    def test_BinProbs(self):
-        conc = LogConcentration(self.bin_counts, 'log-c')
-        gamma = LogBinProbsGamma(self.bin_counts, 'log-q')
-        conc.value = np.log(self.concentration)
-        conc.connect_log_gamma(gamma)
-        ram = RobustAdaptiveMetro(gamma, initial_covar=0.01 * np.identity(self.nbins), stop_adapting_iter=self.nburn)
-        sampler = Sampler()
-        sampler.add_step(ram)
-        sampler.run(self.niter, nburn=self.nburn, verbose=True)
+            alpha_k.connect_prior(prior_mu, prior_var)
 
-        samples = np.array(sampler.samples['log-q'])
-        samples = np.exp(samples)  # convert from log(gamma) to bin_probs
-        samples /= samples.sum(axis=1)[:, np.newaxis]
-        columns = ['bin_probs_' + str(i+1) for i in range(self.nbins)]
-        samples = pd.DataFrame(samples, columns=columns)
+            alpha_k.initialize()
+            ram_step = RobustAdaptiveMetro(alpha_k, initial_covar=np.identity(self.nbins) / 100.0, target_rate=0.15,
+                                           stop_adapting_iter=self.nburn)
+            ram_steps.append(ram_step)
 
-        samples.plot(style='.')
-        xlim = plt.xlim()
-        for i in range(self.nbins):
-            plt.plot(xlim, [self.bin_probs_parent[i]] * 2, 'k')
-        plt.ylim(0, 1)
-        plt.show()
+        alpha_draws = np.empty((self.niter - self.nburn, self.nbins, self.ncomponents))
+        for i in range(self.niter):
+            if i % 1000 == 0:
+                print i
+            for k, ram in enumerate(ram_steps):
+                ram.do_step()
+                if i >= self.nburn:
+                    alpha_draws[i - self.nburn, :, k] = ram.parameter.value
 
-        samples.plot(kind='kde')
-        plt.xlim(0, 1)
-        plt.show()
+        for k, ram in enumerate(ram_steps):
+            print ""
+            print k
+            ram.report()
 
-
-        sns.violinplot(samples)
-        plt.yscale('log')
-        plt.plot(range(1, self.nbins + 1), list(self.bin_probs_parent), 'ko')
-        plt.show()
-
-        lower = np.percentile(samples, 0.5, axis=0)
-        upper = np.percentile(samples, 99.5, axis=0)
-
-        for i in range(self.nbins):
-            self.assertGreater(upper[i], self.bin_probs_parent[i])
-            self.assertLess(lower[i], self.bin_probs_parent[i])
-
-    def test_sampler(self):
-        sampler = run_sampler(self.bin_counts, 10000, burniter=2500)
-
-        print 'Acceptance rates:'
-        for step in sampler.steps:
-            print step.parameter.label, step.acceptance_rate()
-
-        r_samples = np.exp(sampler.samples['log-nfailures'])
-        c_samples = np.exp(sampler.samples['log-conc'])
-        q_samples = np.array(sampler.samples['log-gamma'])
-        q_samples = np.exp(q_samples)  # convert from log(gamma) to bin_probs
-        q_samples /= q_samples.sum(axis=1)[:, np.newaxis]
-
-        bin_cols = ['bin_probs_' + str(i+1) for i in range(self.nbins)]
-        columns = ['nfailures', 'concentration'] + bin_cols
-        samples = pd.DataFrame(np.column_stack((r_samples, c_samples, q_samples)), columns=columns)
-
-        samples.plot(style='.', logy=True)
-        xlim = plt.xlim()
-        plt.plot(xlim, [self.concentration] * 2, 'k')
-        plt.plot(xlim, [self.nfailures] * 2, 'k')
-        for i in range(self.nbins):
-            plt.plot(xlim, [self.bin_probs_parent[i]] * 2, 'k')
-        plt.ylim(0, 1)
-        plt.show()
-
-        samples['nfailures'].plot(kind='kde')
-        plt.show()
-        samples['concentration'].plot(kind='kde')
-        plt.show()
-        samples[bin_cols].plot(kind='kde')
-        plt.xlim(0, 1)
-        plt.show()
-
-        sns.violinplot(samples)
-        plt.yscale('log')
-        plt.plot(1, self.nfailures, 'ko')
-        plt.plot(2, self.concentration, 'ko')
-        plt.plot(range(3, self.nbins + 3), list(self.bin_probs_parent), 'ko')
-        plt.show()
-
-        lower = samples.quantile(0.005, axis=0)
-        upper = samples.quantile(0.995, axis=0)
-
-        self.assertGreater(upper['nfailures'], self.nfailures)
-        self.assertLess(lower['nfailures'], self.nfailures)
-        self.assertGreater(upper['concentration'], self.concentration)
-        self.assertLess(lower['concentration'], self.concentration)
-
-        for i, c in enumerate(bin_cols):
-            self.assertGreater(upper[c], self.bin_probs_parent[i])
-            self.assertLess(lower[c], self.bin_probs_parent[i])
-
+        for k in range(self.ncomponents):
+            df = pd.DataFrame(data=alpha_draws[:, :, k], columns=['bin_' + str(j) for j in range(self.nbins)])
+            sns.boxplot(df)
+            plt.plot(range(1, self.nbins+1), np.log(self.alpha[:, k]))
+            plt.ylabel('log alpha')
+            plt.title('Component ' + str(k))
+            plt.show()
+            plt.close()

@@ -261,7 +261,6 @@ class MixLogNegBinPars(Parameter):
             # likelihood contribution
             logpost += ndata * (gammaln(beta_a + beta_b) - gammaln(beta_a) - gammaln(beta_b) +
                                 gammaln(beta_a + nfailure) - gammaln(nfailure))
-            logpost -= np.sum(self.gammaln_counts[component_idx])
 
             # only compute log gamma function for unique values of self.counts, since expensive
             gammaln_counts_nfailure_unique = gammaln(self.unique_counts + nfailure)
@@ -312,7 +311,7 @@ class LogBinProbsAlpha(Parameter):
         component_idx = self.components.value == self.component_label
         nk = np.sum(component_idx)
         if nk > 1:
-            counts_per_bin_k = self.counts_per_bin[component_idx]
+            counts_per_bin_k = self.counts_per_bin[component_idx] + 1.0
             bin_fracs_k = counts_per_bin_k / counts_per_bin_k.sum(axis=1)[:, np.newaxis].astype(float)
             avg_bin_frac = bin_fracs_k.mean(axis=0)
             var_bin_frac = bin_fracs_k.var(axis=0)
@@ -340,9 +339,9 @@ class LogBinProbsAlpha(Parameter):
         # the prior
 
         value_transformed = np.concatenate((np.log([concentration]), y))
-        jacobian = -value[:-1] + np.log(1.0 + np.sum(alphas[:-1] / alphas[-1])) - value_transformed[0]
+        jacobian = -np.sum(value[:-1]) + np.log(1.0 + np.sum(alphas[:-1] / alphas[-1])) - value_transformed[0]
         vcentered = value_transformed - self.prior_mu.value
-        logprior = jacobian + np.sum(-0.5 * vcentered ** 2 / self.prior_var)
+        logprior = jacobian + np.sum(-0.5 * vcentered ** 2 / self.prior_var.value)
 
         if ndata_k > 0:
             # the likelihood
