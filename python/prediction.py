@@ -4,41 +4,91 @@ import pandas as pd
 import numpy as np
 from scipy.special import gammaln
 import multiprocessing
+from parameters import alpha_inverse_transform
 
 
 def log_sum_of_logs(logx):
-    sorted_logx = logx.sort(ascending=False)
-    log_sum = sorted_logx[0] + np.log(1.0 + np.sum(np.exp(sorted_logx - sorted_logx[0])))
+    m = logx.max()
+    y = logx - m
+    log_sum = m + np.log(np.sum(np.exp(y)))
+
     return log_sum
 
 
-def get_loglik_samples_one_class(class_samples, counts, prior_a=1.0, prior_b=1.0):
+def get_loglik_samples_one_class_multi_component(class_samples, counts):
     """
     Return logarithm of unnormalized class probability for one class for each MCMC sample.
 
     :param class_samples: MCMC samples for distribution corresponding to this class.
     :param counts: Feature vector for a single data point.
-    :param prior_a:
-    :param prior_b:
+
     :return:
     """
-    total_counts = counts.sum()
-    bin_cols = ['bin_probs_' + str(i + 1) for i in range(93)]
 
-    # compute log-likelihood of each data point, one MCMC sample at a time
+    # get the cluster weights\
+    stick_weights = class_samples['Stick Weights']
+    ncomponents = stick_weights.shape[1] + 1
 
-    # first calculate component from negative-binomial model for total counts
-    loglik = gammaln(prior_b + class_samples['nfailures']) - \
-        gammaln(prior_a + prior_b + total_counts - 1 + class_samples['nfailures'])
-    loglik += gammaln(total_counts - 1 + class_samples['nfailures']) - gammaln(class_samples['nfailures'])
+    logprob = pd.DataFrame(data=np.zeros((len(class_samples), ncomponents)), index=class_samples.index,
+                           columns=['Component ' + str(k) for k in range(ncomponents)])
 
-    # now add in contribution from dirichlet-multinomial component
-    loglik += gammaln(class_samples['concentration']) - \
-              gammaln(total_counts + class_samples['concentration'])
+    stick_running_product = 1.0
+    cluster_weights_sum = 0.0
+    for k in range(ncomponents):
+        if k < (ncomponents - 1):
+            cluster_weights = stick_weights[str(k)] * stick_running_product
+            cluster_weights_sum += cluster_weights
+            stick_running_product *= (1.0 - stick_weights[str(k)])
+        else:
+            cluster_weights = 1.0 - cluster_weights_sum
 
-    bcounts = class_samples[bin_cols].apply(lambda x: x * class_samples['concentration'])
-    bcounts_sum = counts.values + bcounts
-    loglik += gammaln(bcounts_sum).sum(axis=1) - gammaln(bcounts).sum(axis=1)
+        clabel = 'Component ' + str(k)
+        component_samples = class_samples[clabel]
+        loglik = get_loglik_samples_one_class_single_component(component_samples, counts)
+        logprob[clabel] = np.log(cluster_weights) + loglik
+
+    logprob = logprob.apply(log_sum_of_logs, axis=1)
+
+    return logprob
+
+
+def get_loglik_samples_one_class_single_component(class_samples, counts):
+    """
+    Return logarithm of unnormalized class probability for one class for each MCMC sample.
+
+    :param class_samples: MCMC samples for distribution corresponding to this class.
+    :param counts: Feature vector for a single data point.
+    :return:
+    """
+    counts = counts.values
+    nfailure = class_samples['nfailure']
+    beta_a = class_samples['beta_a']
+    beta_b = class_samples['beta_b']
+    alpha_cols = [c for c in class_samples.columns if 'alpha' in c]
+    alpha = class_samples[alpha_cols]
+
+    alpha_sum = np.sum(alpha, axis=1)
+
+    total_counts = counts.sum() - 1
+    gammaln_counts_per_bin = gammaln(counts + 1)
+    gammaln_counts_minus_1 = gammaln(total_counts + 1)  # negative binomial parameter is wrt n - 1
+    gammaln_counts = gammaln(counts.sum() + 1.0)
+
+    loglik = gammaln(beta_a + beta_b) - \
+             gammaln_counts_minus_1 - \
+             gammaln(beta_a) - \
+             gammaln(beta_b) - \
+             gammaln(nfailure) + \
+             gammaln(beta_a + nfailure) + \
+             gammaln(total_counts + nfailure) + \
+             gammaln(total_counts + beta_b) - \
+             gammaln(total_counts + beta_a + beta_b + nfailure) + \
+             gammaln_counts + \
+             gammaln(alpha_sum) - \
+             gammaln(total_counts + 1 + alpha_sum) + \
+             np.sum(gammaln(counts + alpha) -
+                    gammaln_counts_per_bin -
+                    gammaln(alpha), axis=1)
 
     return loglik
 
@@ -62,7 +112,7 @@ def get_prob_samples_all_classes(samples, counts, class_prior_prob):
     # draws from class priors, given the training data
     for label in labels:
         # get unnormalized log-probability of test data point being in each class
-        loglik_samples_this_class = get_loglik_samples_one_class(samples[label], counts)
+        loglik_samples_this_class = get_loglik_samples_one_class_multi_component(samples[label], counts)
         # make sure we add in contribution from prior
         prob_samples[label] = loglik_samples_this_class + np.log(class_prior_prob[label])
 

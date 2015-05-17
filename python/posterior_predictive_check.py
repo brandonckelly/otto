@@ -17,6 +17,15 @@ def negbin_sample(nfailure, p):
 
 def bnb_sample(r, a, b, n):
     p = np.random.beta(a, b, n)
+    if np.isscalar(p):
+        if p < 1e-3:
+            p = 1e-3
+        elif p > 0.999:
+            p = 0.999
+    else:
+        p[p < 1e-3] = 1e-3
+        p[p > 0.999] = 0.999
+
     m = negbin_sample(r, p)
     return m
 

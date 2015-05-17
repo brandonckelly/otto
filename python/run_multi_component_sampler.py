@@ -103,7 +103,7 @@ def get_mcmc_samples(sampler, ncomponents):
 
 def run_parallel_chains_helper_(args):
     np.random.seed()
-    counts_per_bin, ncomponents, nsamples, burniter, nthin, chain_id = args
+    counts_per_bin, ncomponents, nsamples, burniter, nthin, chain_id, data_dir, target = args
     sampler = build_sampler(counts_per_bin, ncomponents)
 
     sampler.run(nsamples, nburn=burniter, nthin=nthin, verbose=True)
@@ -122,7 +122,9 @@ def run_parallel_chains_helper_(args):
     return samples
 
 
-def run_sampler(counts_per_bin, nsamples, ncomponents, burniter=None, nthin=1, n_jobs=-1, nchains=-1):
+def run_sampler(counts_per_bin, nsamples, ncomponents, target, burniter=None, nthin=1, n_jobs=-1, nchains=-1):
+    project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
+    data_dir = os.path.join(project_dir, 'data')
 
     if burniter is None:
         niter = nsamples * nthin
@@ -133,7 +135,8 @@ def run_sampler(counts_per_bin, nsamples, ncomponents, burniter=None, nthin=1, n
     if nchains < 1:
         nchains = n_jobs
 
-    args_list = [(counts_per_bin, ncomponents, nsamples, burniter, nthin, chain_id) for chain_id in range(nchains)]
+    args_list = [(counts_per_bin, ncomponents, nsamples, burniter, nthin, chain_id, data_dir, target)
+                 for chain_id in range(nchains)]
 
     if n_jobs > 1:
         pool = multiprocessing.Pool(n_jobs)
@@ -149,16 +152,11 @@ def run_sampler(counts_per_bin, nsamples, ncomponents, burniter=None, nthin=1, n
     return samples
 
 
-if __name__ == "__main__":
-
-    ncomponents = 15
+def main(ncomponents, nsamples, burniter):
 
     project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
     data_dir = os.path.join(project_dir, 'data')
     plot_dir = os.path.join(project_dir, 'plots')
-
-    nsamples = 7500
-    burniter = 5000
 
     ntrain = sys.maxint
 
@@ -180,6 +178,15 @@ if __name__ == "__main__":
 
         print 'Training with', len(this_df), 'data points...'
 
-        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, burniter=burniter, nthin=1, n_jobs=4)
+        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, target,
+                              burniter=burniter, nthin=1, n_jobs=-1)
 
         samples.to_hdf(os.path.join(data_dir, 'multi_component_samples_' + target + '.h5'), 'df')
+
+if __name__ == "__main__":
+
+    ncomponents = 15
+    nsamples = 100
+    burniter = 50
+
+    main(ncomponents, nsamples, burniter)
