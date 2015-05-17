@@ -494,6 +494,9 @@ class StickWeight(Parameter):
         for k in range(self.components.ncomponents - 1):
             new_weight[k] = np.random.beta(1 + n_k[k], self.concentration.value + np.sum(n_k[k+1:]))
 
+        # correction for numerical stability
+        new_weight[new_weight > 0.999] = 0.999
+
         return new_weight
 
 

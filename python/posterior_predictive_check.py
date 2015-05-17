@@ -10,33 +10,41 @@ import seaborn as sns
 def negbin_sample(nfailure, p):
     shape = nfailure
     scale = p / (1.0 - p)
-    l = np.random.gamma(shape, scale)
+    l = np.random.gamma(shape, 1.0 / scale)
     counts = np.random.poisson(l) + 1
     return counts
+
+
+def bnb_sample(r, a, b, n):
+    p = np.random.beta(a, b, n)
+    m = negbin_sample(r, p)
+    return m
 
 
 def generate_single_component_sample(sample, ndata):
 
     bin_cols = [c for c in sample.index if 'alpha' in c]
     nbins = len(bin_cols)
-    nfailures = sample['nfailures']
+    nfailures = sample['nfailure']
     a = sample['beta_a']
     b = sample['beta_b']
 
-    p = np.random.beta(a, b)
-    total_counts_draw = negbin_sample(nfailures, p, ndata)
+    total_counts_draw = bnb_sample(nfailures, a, b, ndata)
 
     bin_probs = np.random.dirichlet(sample[bin_cols], ndata)
     bin_counts = np.empty((ndata, nbins))
-    for i in range(ndata):
-        bin_counts[i] = np.random.multinomial(total_counts_draw[i], bin_probs[i])
+    if ndata == 1:
+        bin_counts = np.random.multinomial(total_counts_draw, bin_probs.ravel())
+    else:
+        for i in range(ndata):
+            bin_counts[i] = np.random.multinomial(total_counts_draw[i], bin_probs[i])
 
     return bin_counts
 
 
 def generate_predictive_samples(samples, ndata):
-    bin_labels = ['bin_' + str(i) for i, c in enumerate(samples.columns) if 'bin_prob' in c]
-    component_labels = [c for c in samples.index.get_level_values(0).unique() if 'Component' in c]
+    bin_labels = ['bin_' + str(i) for i in range(1, 94)]
+    component_labels = [c for c in samples.columns.get_level_values(0).unique() if 'Component' in c]
     ncomponents = len(component_labels)
 
     # generate posterior draws
@@ -54,14 +62,14 @@ def generate_predictive_samples(samples, ndata):
 
         ndata_cluster = np.random.multinomial(ndata, cluster_weights)
 
+        data_samples = []
         for k, c in enumerate(component_labels):
             this_sample_k = sample.loc[c]
-            this_data_sample = generate_single_component_sample(this_sample_k, ndata_cluster[k])
-            if k == 0:
-                data_samples = this_data_sample
-            else:
-                np.append(data_samples, this_data_sample)
+            if ndata_cluster[k] > 0:
+                this_data_sample = generate_single_component_sample(this_sample_k, ndata_cluster[k])
+                data_samples.append(this_data_sample)
 
+        data_samples = np.vstack(data_samples)
         this_sample_df = pd.DataFrame(data_samples, columns=bin_labels)
         df_labels.append('MCMC ' + str(scount))
         post_data.append(this_sample_df)
@@ -70,9 +78,6 @@ def generate_predictive_samples(samples, ndata):
     post_data = pd.concat(post_data, keys=df_labels)
 
     return post_data
-
-
-########## stopped here : May 12 ############
 
 
 def posterior_predictive_total_counts(post_bin_counts, bin_counts):
@@ -224,16 +229,13 @@ def posterior_predictive_check(samples, bin_counts, class_label, nsamples=None):
         mcmc_samples = samples.iloc[mcmc_idx]
 
     project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
-    plot_dir = os.path.join(project_dir, 'plots', 'single_component')
+    plot_dir = os.path.join(project_dir, 'plots', 'multi')
 
     total_counts = bin_counts.sum(axis=1)
     ndata = len(total_counts)
-    total_counts_sum = np.sum(total_counts)
-
-    single_sampler = lambda x: generate_single_component_sample(x, total_counts_sum, ndata)
 
     print 'Generating predictive samples...'
-    data_samples = generate_predictive_samples(mcmc_samples, single_sampler=single_sampler)
+    data_samples = generate_predictive_samples(mcmc_samples, ndata)
 
     print 'Comparing with histogram of total counts...'
     ax = posterior_predictive_total_counts(data_samples, bin_counts)

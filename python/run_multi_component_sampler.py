@@ -21,10 +21,10 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
     component_labels = MixtureComponents('component_label', counts_per_bin, track=False)
 
     # prior parameters
-    prior_negbin_mean = PriorMu('negbin-prior-mean', np.array([np.log(10), np.log(10.0), np.log(10.0)]),
-                                np.diag([1.0, 0.5 ** 2, 0.5 ** 2]),
+    prior_negbin_mean = PriorMu('negbin-prior-mean', np.array([np.log(40), np.log(2.0), np.log(2.0)]),
+                                np.diag([2.0, 0.5 ** 2, 0.5 ** 2]),
                                 track=False)
-    prior_negbin_covar = PriorCovar('negbin-prior-covar', 5, np.eye(3) / 10.0, track=False)
+    prior_negbin_covar = PriorCovar('negbin-prior-covar', 5, np.diag([1.0, 0.1, 0.1]), track=False)
     prior_alpha_mean = PriorMu('alpha-prior-mean', np.array([np.log(nbins)] + (nbins - 1) * [0]),
                                np.array([0.5 ** 2] + (nbins - 1) * [0.5 ** 2]), track=False)
     prior_alpha_var = PriorVar('alpha-prior-var', 2 * np.ones(nbins), np.ones(nbins) / 10.0,
@@ -151,7 +151,7 @@ def run_sampler(counts_per_bin, nsamples, ncomponents, burniter=None, nthin=1, n
 
 if __name__ == "__main__":
 
-    ncomponents = 15
+    ncomponents = 10
 
     project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
     data_dir = os.path.join(project_dir, 'data')
