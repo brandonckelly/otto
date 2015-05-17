@@ -26,8 +26,8 @@ def build_sampler(counts_per_bin, ncomponents, stop_adapting=sys.maxsize):
                                 track=False)
     prior_negbin_covar = PriorCovar('negbin-prior-covar', 5, np.diag([1.0, 0.1, 0.1]), track=False)
     prior_alpha_mean = PriorMu('alpha-prior-mean', np.array([np.log(nbins)] + (nbins - 1) * [0]),
-                               np.array([0.5 ** 2] + (nbins - 1) * [0.5 ** 2]), track=False)
-    prior_alpha_var = PriorVar('alpha-prior-var', 2 * np.ones(nbins), np.ones(nbins) / 10.0,
+                               np.array([2.0 ** 2] + (nbins - 1) * [2.0 ** 2]), track=False)
+    prior_alpha_var = PriorVar('alpha-prior-var', 1 * np.ones(nbins), 2.0 * np.ones(nbins),
                                track=False)
     prior_negbin_mean.child_var = prior_negbin_covar
     prior_negbin_covar.child_mean = prior_negbin_mean
@@ -151,14 +151,14 @@ def run_sampler(counts_per_bin, nsamples, ncomponents, burniter=None, nthin=1, n
 
 if __name__ == "__main__":
 
-    ncomponents = 10
+    ncomponents = 15
 
     project_dir = os.path.join(os.environ['HOME'], 'Projects', 'Kaggle', 'otto')
     data_dir = os.path.join(project_dir, 'data')
     plot_dir = os.path.join(project_dir, 'plots')
 
-    nsamples = 5000
-    burniter = 2500
+    nsamples = 7500
+    burniter = 5000
 
     ntrain = sys.maxint
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     class_labels = train_df['target'].unique()
 
-    for target in class_labels[:1]:
+    for target in class_labels:
         print ''
         print 'Doing class', target
         this_df = train_df.query('target == @target')
@@ -180,6 +180,6 @@ if __name__ == "__main__":
 
         print 'Training with', len(this_df), 'data points...'
 
-        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, burniter=burniter, nthin=1, n_jobs=3)
+        samples = run_sampler(this_df[columns].values, nsamples, ncomponents, burniter=burniter, nthin=1, n_jobs=4)
 
         samples.to_hdf(os.path.join(data_dir, 'multi_component_samples_' + target + '.h5'), 'df')

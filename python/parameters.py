@@ -4,6 +4,7 @@ import numpy as np
 from scipy.special import gammaln
 from bck_mcmc.parameter import Parameter
 from scipy import linalg
+from sklearn.cluster import KMeans
 
 
 class LogNegBinCounts(Parameter):
@@ -405,6 +406,27 @@ class MixtureComponents(Parameter):
         self.ncomponents = len(self.negbin_pars)
 
     def initialize(self):
+        if self.ncomponents == 0:
+            raise ValueError("Component parameter dictionary is empty.")
+        if self.stick_weights is None:
+            raise ValueError(self.label + " does not know about a stick weight parameter.")
+
+        total_counts = self.counts_per_bin.sum(axis=1)
+        counts_per_bin = self.counts_per_bin + 1.0
+        bin_fracs = counts_per_bin / counts_per_bin.sum(axis=1)[:, np.newaxis].astype(float)
+        def logit(x):
+            return np.log(x / (1.0 - x))
+        logit_bin_fracs = logit(bin_fracs)
+        X = np.column_stack((np.log(total_counts), logit_bin_fracs))
+        cluster_labels = KMeans(n_clusters=self.ncomponents).fit_predict(X)
+        # order the clusters by decreasing counts
+        cluster_counts = np.bincount(cluster_labels, minlength=self.ncomponents)
+        sorted_idx = np.argsort(cluster_counts)[::-1]
+        self.value = np.zeros_like(cluster_labels)
+        for i in range(self.ncomponents):
+            self.value[cluster_labels == sorted_idx[i]] = i
+
+    def initialize2(self):
         if self.ncomponents == 0:
             raise ValueError("Component parameter dictionary is empty.")
         if self.stick_weights is None:
